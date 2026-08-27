@@ -1,0 +1,78 @@
+# =========================
+# Python
+# =========================
+
+__pycache__/
+*.py[cod]
+*.pyo
+
+.venv/
+venv/
+env/
+
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+
+# =========================
+# Environment / Secrets
+# =========================
+
+.env
+.env.local
+.env.*.local
+
+# Keep example environment files
+!.env.example
+
+
+# =========================
+# Node / React / Vite
+# =========================
+
+node_modules/
+
+dist/
+build/
+
+.vite/
+*.local
+
+
+# =========================
+# Logs
+# =========================
+
+*.log
+logs/
+
+
+# =========================
+# Temporary Files
+# =========================
+
+*.tmp
+*.temp
+*.swp
+*.swo
+*~
+
+
+# =========================
+# IDE / Editor
+# =========================
+
+.vscode/
+.idea/
+
+
+# =========================
+# Operating System
+# =========================
+
+.DS_Store
+Thumbs.db
+desktop.ini
