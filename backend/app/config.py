@@ -15,6 +15,8 @@ class Settings(BaseSettings):
     db_name: str
 
     frontend_origin: str
+    session_cookie_secure: bool = False
+    session_lifetime_hours: int = 12
 
     model_config = SettingsConfigDict(
         env_file=ENV_FILE,

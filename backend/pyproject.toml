@@ -7,6 +7,7 @@ dependencies = [
     "alembic>=1.19.1",
     "fastapi",
     "psycopg[binary]>=3.3.4",
+    "pwdlib[argon2]>=0.3.1",
     "pydantic",
     "pydantic-settings>=2.15.0",
     "sqlalchemy>=2.0.52",

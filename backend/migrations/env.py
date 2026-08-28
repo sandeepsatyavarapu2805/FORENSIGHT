@@ -5,6 +5,8 @@ from sqlalchemy import pool
 
 from alembic import context
 from app.config import settings
+from app.db.base import Base
+import app.models  # noqa: F401
 
 config = context.config
 
@@ -16,7 +18,7 @@ config.set_main_option(
     settings.database_url().render_as_string(hide_password=False),
 )
 
-target_metadata = None
+target_metadata = Base.metadata
 
 
 def run_migrations_offline() -> None:
