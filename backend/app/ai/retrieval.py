@@ -15,10 +15,7 @@ class RetrievedEvidence:
 def _query_terms(query: str) -> list[str]:
     return [
         term
-        for term in {
-            token.strip().casefold()
-            for token in query.split()
-        }
+        for term in {token.strip().casefold() for token in query.split()}
         if len(term) >= 2
     ]
 
@@ -38,21 +35,15 @@ def retrieve_evidence(
     terms = _query_terms(cleaned_query)
 
     conditions = [
-        func.lower(EvidenceItem.evidence_reference)
-        == cleaned_query.casefold(),
-        func.lower(EvidenceItem.original_record_id)
-        == cleaned_query.casefold(),
+        func.lower(EvidenceItem.evidence_reference) == cleaned_query.casefold(),
+        func.lower(EvidenceItem.original_record_id) == cleaned_query.casefold(),
         EvidenceItem.searchable_text.ilike(
             f"%{cleaned_query}%",
         ),
     ]
 
     for term in terms:
-        conditions.append(
-            EvidenceItem.searchable_text.ilike(
-                f"%{term}%"
-            )
-        )
+        conditions.append(EvidenceItem.searchable_text.ilike(f"%{term}%"))
 
     candidates = list(
         db.scalars(
