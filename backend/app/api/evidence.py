@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
-from app.api.cases import _owned_case
+from app.access import require_case_view
 from app.api.dependencies import get_current_user
 from app.db.session import get_db
 from app.models.evidence_item import EvidenceItem
@@ -27,12 +27,12 @@ def get_evidence_filter_options(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> EvidenceFilterOptionsResponse:
-    _owned_case(db, case_id, current_user.id)
+    access = require_case_view(db, case_id, current_user.id)
 
     artifact_types = list(
         db.scalars(
             select(EvidenceItem.artifact_type)
-            .where(EvidenceItem.case_id == case_id)
+            .where(EvidenceItem.case_id == access.evidence_case_id)
             .distinct()
             .order_by(EvidenceItem.artifact_type)
         )
@@ -42,7 +42,7 @@ def get_evidence_filter_options(
         db.scalars(
             select(EvidenceItem.application)
             .where(
-                EvidenceItem.case_id == case_id,
+                EvidenceItem.case_id == access.evidence_case_id,
                 EvidenceItem.application.is_not(None),
             )
             .distinct()
@@ -63,13 +63,13 @@ def get_evidence_by_reference(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> EvidenceItem:
-    _owned_case(db, case_id, current_user.id)
+    access = require_case_view(db, case_id, current_user.id)
 
     normalized_reference = evidence_reference.strip()
 
     evidence = db.scalar(
         select(EvidenceItem).where(
-            EvidenceItem.case_id == case_id,
+            EvidenceItem.case_id == access.evidence_case_id,
             func.lower(EvidenceItem.evidence_reference) == normalized_reference.lower(),
         )
     )
@@ -98,7 +98,7 @@ def list_case_evidence(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> EvidencePageResponse:
-    _owned_case(db, case_id, current_user.id)
+    access = require_case_view(db, case_id, current_user.id)
 
     if date_from is not None and date_to is not None and date_from > date_to:
         raise HTTPException(
@@ -106,7 +106,7 @@ def list_case_evidence(
             detail="date_from must not be later than date_to",
         )
 
-    filters = [EvidenceItem.case_id == case_id]
+    filters = [EvidenceItem.case_id == access.evidence_case_id]
 
     if source_id is not None:
         filters.append(EvidenceItem.source_id == source_id)
@@ -179,12 +179,12 @@ def get_case_evidence(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> EvidenceItem:
-    _owned_case(db, case_id, current_user.id)
+    access = require_case_view(db, case_id, current_user.id)
 
     evidence = db.scalar(
         select(EvidenceItem).where(
             EvidenceItem.id == evidence_id,
-            EvidenceItem.case_id == case_id,
+            EvidenceItem.case_id == access.evidence_case_id,
         )
     )
 

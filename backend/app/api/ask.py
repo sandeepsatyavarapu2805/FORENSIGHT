@@ -7,7 +7,7 @@ from app.ai.context import build_evidence_context
 from app.ai.grounding import build_grounded_fallback
 from app.ai.provider import AIProvider, ProviderError, get_ai_provider
 from app.ai.retrieval import retrieve_evidence
-from app.api.cases import _owned_case
+from app.access import require_case_view
 from app.api.dependencies import get_current_user
 from app.db.session import get_db
 from app.models.user import User
@@ -34,7 +34,7 @@ def ask_forensight(
     current_user: User = Depends(get_current_user),
     provider: AIProvider = Depends(get_ai_provider),
 ) -> AskResponse:
-    _owned_case(
+    access = require_case_view(
         db,
         case_id,
         current_user.id,
@@ -42,7 +42,7 @@ def ask_forensight(
 
     retrieved = retrieve_evidence(
         db,
-        case_id,
+        access.evidence_case_id,
         request.query,
     )
 

@@ -9,6 +9,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db.base import Base
 
 if TYPE_CHECKING:
+    from app.models.case_access_grant import CaseAccessGrant
     from app.models.evidence_source import EvidenceSource
     from app.models.user import User
 
@@ -29,6 +30,24 @@ class Case(Base):
         ForeignKey("users.id"),
         nullable=False,
         index=True,
+    )
+    case_kind: Mapped[str] = mapped_column(
+        String(30), nullable=False, default="original", server_default="original"
+    )
+    parent_case_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("cases.id"), nullable=True, index=True
+    )
+    evidence_case_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("cases.id"), nullable=True, index=True
+    )
+    source_grant_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey(
+            "case_access_grants.id",
+            use_alter=True,
+        ),
+        nullable=True,
+        unique=True,
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()

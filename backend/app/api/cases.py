@@ -6,6 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_current_user
+from app.access import require_case_modify, require_case_view
 from app.db.session import get_db
 from app.models.case import Case
 from app.models.user import User
@@ -66,7 +67,7 @@ def get_case(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> Case:
-    return _owned_case(db, case_id, current_user.id)
+    return require_case_view(db, case_id, current_user.id).case
 
 
 @router.patch("/{case_id}", response_model=CaseResponse)
@@ -76,7 +77,7 @@ def update_case(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> Case:
-    case = _owned_case(db, case_id, current_user.id)
+    case = require_case_modify(db, case_id, current_user.id).case
     for field, value in payload.model_dump(exclude_unset=True).items():
         setattr(case, field, value)
     db.commit()

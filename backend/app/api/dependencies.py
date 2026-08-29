@@ -10,10 +10,10 @@ from app.models.user import User
 from app.security import SESSION_COOKIE_NAME, hash_session_token
 
 
-def get_current_user(
+def get_current_auth_session(
     session_token: str | None = Cookie(default=None, alias=SESSION_COOKIE_NAME),
     db: Session = Depends(get_db),
-) -> User:
+) -> AuthSession:
     if not session_token:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED)
 
@@ -26,6 +26,13 @@ def get_current_user(
     if auth_session is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED)
 
+    return auth_session
+
+
+def get_current_user(
+    auth_session: AuthSession = Depends(get_current_auth_session),
+    db: Session = Depends(get_db),
+) -> User:
     user = db.get(User, auth_session.user_id)
     if user is None or not user.is_active:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED)

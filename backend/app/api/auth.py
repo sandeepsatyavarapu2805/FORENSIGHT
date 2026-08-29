@@ -2,12 +2,13 @@ from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
-from app.api.dependencies import get_current_user
+from app.api.dependencies import get_current_auth_session, get_current_user
+from app.audit import audit_event
 from app.config import settings
 from app.db.session import get_db
 from app.models.auth_session import AuthSession
 from app.models.user import User
-from app.schemas import LoginRequest, UserResponse
+from app.schemas import LoginRequest, ReauthenticateRequest, ReauthenticateResponse, UserResponse
 from app.security import (
     SESSION_COOKIE_NAME,
     clear_login_failures,
@@ -20,6 +21,7 @@ from app.security import (
 )
 
 router = APIRouter(prefix="/auth", tags=["authentication"])
+REAUTH_WINDOW_SECONDS = 120
 
 
 def _login_key(request: Request, username: str) -> str:
@@ -76,6 +78,25 @@ def login(
 @router.get("/me", response_model=UserResponse)
 def me(current_user: User = Depends(get_current_user)) -> User:
     return current_user
+
+
+@router.post("/reauthenticate", response_model=ReauthenticateResponse)
+def reauthenticate(
+    payload: ReauthenticateRequest,
+    auth_session: AuthSession = Depends(get_current_auth_session),
+    db: Session = Depends(get_db),
+) -> ReauthenticateResponse:
+    user = db.get(User, auth_session.user_id)
+    if user is None or not verify_password(payload.password, user.password_hash):
+        audit_event(db, action="password_reauthenticate", success=False, user_id=auth_session.user_id)
+        db.commit()
+        raise HTTPException(status_code=401, detail="Reauthentication failed")
+    from datetime import UTC, datetime, timedelta
+
+    auth_session.reauthenticated_until = datetime.now(UTC) + timedelta(seconds=REAUTH_WINDOW_SECONDS)
+    audit_event(db, action="password_reauthenticate", success=True, user_id=user.id)
+    db.commit()
+    return ReauthenticateResponse(reauthenticated_until=auth_session.reauthenticated_until)
 
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)

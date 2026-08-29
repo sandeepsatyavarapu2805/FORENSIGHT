@@ -10,6 +10,10 @@ def test_case_model_columns() -> None:
         "name",
         "description",
         "owner_id",
+        "case_kind",
+        "parent_case_id",
+        "evidence_case_id",
+        "source_grant_id",
         "created_at",
         "updated_at",
     }

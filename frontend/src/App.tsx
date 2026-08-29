@@ -16,6 +16,9 @@ type CaseRecord = {
   owner_id: string
   created_at: string
   updated_at: string
+  case_kind: 'original' | 'investigation_copy'
+  parent_case_id: string | null
+  evidence_case_id: string | null
 }
 
 type EvidenceSource = {
@@ -180,6 +183,44 @@ type InvestigationReport = {
   warnings: string[]
 }
 
+type AccessGrant = {
+  id: string
+  case_id: string
+  recipient_id: string
+  recipient_username: string
+  created_at: string
+  expires_at: string
+  activated_at: string | null
+  revoked_at: string | null
+  status: 'pending' | 'active' | 'expired' | 'revoked'
+}
+
+type CreatedAccessGrant = AccessGrant & { access_code: string }
+
+type AccessibleCase = {
+  case: CaseRecord
+  grant_id: string
+  access_level: 'temporary_read_only'
+  expires_at: string
+}
+
+type ProposedFinding = {
+  id: string
+  source_copy_case_id: string
+  original_case_id: string
+  submitted_by_id: string
+  title: string
+  description: string
+  status: 'draft' | 'submitted' | 'accepted' | 'rejected'
+  evidence: FindingEvidence[]
+  created_at: string
+  updated_at: string
+  submitted_at: string | null
+  reviewed_at: string | null
+  reviewed_by_id: string | null
+  accepted_finding_id: string | null
+}
+
 type View = 'Overview' | 'Case Information' | 'Import / Sources' | string
 
 const primaryNavigation = [
@@ -188,6 +229,7 @@ const primaryNavigation = [
   'Analysis',
   'Findings',
   'Reports',
+  'Proposals',
 ]
 
 const secondaryNavigation = [
@@ -1015,6 +1057,8 @@ function App() {
     view === 'Ask' ||
     view === 'Findings' ||
     view === 'Reports' ||
+    view === 'Proposals' ||
+    view === 'Case Access / Sharing' ||
     view === 'Case Information' ||
     view === 'Import / Sources'
 
@@ -1467,6 +1511,31 @@ function App() {
                 setEvidenceLoading(true)
                 setEvidenceError('')
                 setView('Evidence')
+              }}
+            />
+          )}
+
+          {view === 'Proposals' && (
+            <ProposalsWorkspace
+              key={currentCase?.id ?? 'no-case'}
+              currentCase={currentCase}
+              onEvidenceReference={(reference) => {
+                setEvidenceSearch(reference)
+                setEvidenceOffset(0)
+                setEvidenceLoading(true)
+                setEvidenceError('')
+                setView('Evidence')
+              }}
+            />
+          )}
+
+          {view === 'Case Access / Sharing' && user && (
+            <CaseAccessWorkspace
+              user={user}
+              currentCase={currentCase}
+              onOpenCase={(selected) => {
+                setCurrentCase(selected)
+                setView('Overview')
               }}
             />
           )}
@@ -2394,6 +2463,259 @@ function EvidenceWorkspace({
   )
 }
 
+function CaseAccessWorkspace({
+  user,
+  currentCase,
+  onOpenCase,
+}: {
+  user: User
+  currentCase: CaseRecord | null
+  onOpenCase: (caseRecord: CaseRecord) => void
+}) {
+  const [grants, setGrants] = useState<AccessGrant[]>([])
+  const [sharedCases, setSharedCases] = useState<AccessibleCase[]>([])
+  const [createdGrant, setCreatedGrant] = useState<CreatedAccessGrant | null>(null)
+  const [error, setError] = useState('')
+
+  const isOriginalOwner = Boolean(
+    currentCase && currentCase.owner_id === user.id && currentCase.case_kind === 'original',
+  )
+
+  const refresh = useCallback(async () => {
+    try {
+      const accessible = await apiGet<AccessibleCase[]>('/access/shared-cases')
+      setSharedCases(accessible)
+      if (currentCase && currentCase.owner_id === user.id && currentCase.case_kind === 'original') {
+        setGrants(await apiGet<AccessGrant[]>(`/cases/${currentCase.id}/access-grants`))
+      } else {
+        setGrants([])
+      }
+      setError('')
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Unable to load case access')
+    }
+  }, [currentCase, user.id])
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => void refresh(), 0)
+    return () => window.clearTimeout(timer)
+  }, [refresh])
+
+  async function createGrant(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!currentCase) return
+    const form = event.currentTarget
+    const data = new FormData(form)
+    try {
+      const created = await apiPost<CreatedAccessGrant>(
+        `/cases/${currentCase.id}/access-grants`,
+        {
+          recipient_username: data.get('recipient_username'),
+          duration_hours: Number(data.get('duration_hours')),
+        },
+      )
+      setCreatedGrant(created)
+      form.reset()
+      await refresh()
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Unable to create access grant')
+    }
+  }
+
+  async function activateGrant(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    const form = event.currentTarget
+    const data = new FormData(form)
+    try {
+      await apiPost(`/access-grants/${data.get('grant_id')}/activate`, {
+        code: data.get('access_code'),
+      })
+      form.reset()
+      await refresh()
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Unable to activate access')
+    }
+  }
+
+  async function revoke(grant: AccessGrant) {
+    if (!currentCase) return
+    try {
+      await apiPost(`/cases/${currentCase.id}/access-grants/${grant.id}/revoke`)
+      await refresh()
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Unable to revoke grant')
+    }
+  }
+
+  async function createCopy(shared: AccessibleCase) {
+    try {
+      const result = await apiPost<{ case: CaseRecord }>(`/access-grants/${shared.grant_id}/copy`)
+      onOpenCase(result.case)
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Unable to create investigation copy')
+    }
+  }
+
+  return (
+    <>
+      <PageHeader
+        eyebrow="SECURE COLLABORATION"
+        title="Case Access / Sharing"
+        description="Temporary access requires an authenticated recipient and a one-time activation code. Activated access remains read-only."
+      />
+      {error && <div className="message error" role="alert">{error}</div>}
+      <div className="access-grid">
+        <section className="panel">
+          <h2>Activate shared access</h2>
+          <form className="stacked-form" onSubmit={(event) => void activateGrant(event)}>
+            <label>Grant ID<input name="grant_id" required /></label>
+            <label>Access code<input name="access_code" required autoComplete="off" /></label>
+            <button className="primary-button">Activate access</button>
+          </form>
+          <h3>Accessible shared cases</h3>
+          {sharedCases.length === 0 ? <p className="muted">No active shared cases.</p> : (
+            <div className="record-list">
+              {sharedCases.map((shared) => (
+                <article className="shared-case-card" key={shared.grant_id}>
+                  <span className="status-pill">READ ONLY</span>
+                  <strong>{shared.case.name}</strong>
+                  <span>{shared.case.case_identifier}</span>
+                  <small>Expires {new Date(shared.expires_at).toLocaleString()}</small>
+                  <div className="inline-actions">
+                    <button className="topbar-button" type="button" onClick={() => onOpenCase(shared.case)}>Open</button>
+                    <button className="primary-button" type="button" onClick={() => void createCopy(shared)}>Create investigation copy</button>
+                  </div>
+                </article>
+              ))}
+            </div>
+          )}
+        </section>
+        <section className="panel">
+          <h2>Owner sharing controls</h2>
+          {!isOriginalOwner ? <p className="muted">Open an original case you own to create or revoke grants.</p> : (
+            <>
+              <form className="stacked-form" onSubmit={(event) => void createGrant(event)}>
+                <label>Recipient username<input name="recipient_username" required /></label>
+                <label>Duration<select name="duration_hours" defaultValue="24"><option value="24">24 hours</option><option value="168">7 days</option><option value="720">30 days</option></select></label>
+                <button className="primary-button">Create grant</button>
+              </form>
+              {createdGrant && (
+                <div className="credential-once">
+                  <strong>Copy these credentials now</strong>
+                  <span>Grant ID: <code>{createdGrant.id}</code></span>
+                  <span>Access code: <code>{createdGrant.access_code}</code></span>
+                  <p>This code is returned once and is not stored in plaintext.</p>
+                  <CopyValueButton value={`${createdGrant.id}\n${createdGrant.access_code}`} label="grant credentials" />
+                </div>
+              )}
+              <div className="grant-list">
+                {grants.map((grant) => (
+                  <article className="grant-row" key={grant.id}>
+                    <div><strong>{grant.recipient_username}</strong><span>{grant.status} · expires {new Date(grant.expires_at).toLocaleString()}</span></div>
+                    {grant.status !== 'revoked' && <button className="topbar-button" type="button" onClick={() => void revoke(grant)}>Revoke</button>}
+                  </article>
+                ))}
+              </div>
+            </>
+          )}
+        </section>
+      </div>
+    </>
+  )
+}
+
+function ProposalsWorkspace({
+  currentCase,
+  onEvidenceReference,
+}: {
+  currentCase: CaseRecord | null
+  onEvidenceReference: (reference: string) => void
+}) {
+  const [proposals, setProposals] = useState<ProposedFinding[]>([])
+  const [error, setError] = useState('')
+
+  const refresh = useCallback(async () => {
+    if (!currentCase) return
+    try {
+      setProposals(await apiGet<ProposedFinding[]>(`/cases/${currentCase.id}/proposals`))
+      setError('')
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Unable to load proposals')
+    }
+  }, [currentCase])
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => void refresh(), 0)
+    return () => window.clearTimeout(timer)
+  }, [refresh])
+
+  async function create(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!currentCase) return
+    const form = event.currentTarget
+    const data = new FormData(form)
+    try {
+      await apiPost(`/cases/${currentCase.id}/proposals`, {
+        title: data.get('title'),
+        description: data.get('description'),
+        evidence_references: String(data.get('evidence_references') ?? '').split(',').map((value) => value.trim()).filter(Boolean),
+      })
+      form.reset()
+      await refresh()
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Unable to create proposal')
+    }
+  }
+
+  async function transition(proposal: ProposedFinding, action: 'submit' | 'accept' | 'reject') {
+    if (!currentCase) return
+    try {
+      await apiPost(`/cases/${currentCase.id}/proposals/${proposal.id}/${action}`)
+      await refresh()
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Unable to update proposal')
+    }
+  }
+
+  const isCopy = currentCase?.case_kind === 'investigation_copy'
+  return (
+    <>
+      <PageHeader eyebrow="CONTROLLED COLLABORATION" title="Proposed Findings" description="Copy investigators can submit evidence-linked findings for review without modifying original evidence." />
+      {!currentCase ? <EmptySelection /> : (
+        <div className="findings-layout">
+          <section className="panel">
+            <h2>{isCopy ? 'Create proposed finding' : 'Review queue'}</h2>
+            {isCopy ? (
+              <form className="stacked-form" onSubmit={(event) => void create(event)}>
+                <label>Title<input name="title" required /></label>
+                <label>Description<textarea name="description" rows={5} /></label>
+                <label>Evidence references<input name="evidence_references" placeholder="MSG-001, CALL-002" /></label>
+                <button className="primary-button">Save draft proposal</button>
+              </form>
+            ) : <p className="muted">Only the original case owner can accept or reject submitted proposals.</p>}
+          </section>
+          <section className="panel">
+            <h2>{isCopy ? 'My proposals' : 'Incoming proposals'}</h2>
+            {error && <div className="message error">{error}</div>}
+            {proposals.length === 0 ? <p className="muted">No proposals available.</p> : proposals.map((proposal) => (
+              <article className="finding-card" key={proposal.id}>
+                <span className={`status-pill ${proposal.status}`}>{proposal.status}</span>
+                <h3>{proposal.title}</h3>
+                <p>{proposal.description}</p>
+                <EvidenceReferences references={proposal.evidence.map((item) => item.evidence_reference)} onOpen={onEvidenceReference} />
+                <div className="inline-actions">
+                  {isCopy && proposal.status === 'draft' && <button className="primary-button" type="button" onClick={() => void transition(proposal, 'submit')}>Submit</button>}
+                  {!isCopy && proposal.status === 'submitted' && <><button className="primary-button" type="button" onClick={() => void transition(proposal, 'accept')}>Accept</button><button className="topbar-button" type="button" onClick={() => void transition(proposal, 'reject')}>Reject</button></>}
+                </div>
+              </article>
+            ))}
+          </section>
+        </div>
+      )}
+    </>
+  )
+}
+
 function FindingsWorkspace({
   currentCase,
   onEvidenceReference,
@@ -2407,35 +2729,23 @@ function FindingsWorkspace({
 
   const load = useCallback(async () => {
     if (!currentCase) return
+
     try {
-      setFindings(await apiGet<Finding[]>(`/cases/${currentCase.id}/findings`))
+      setFindings(
+        await apiGet<Finding[]>(
+          `/cases/${currentCase.id}/findings`,
+        ),
+      )
       setError('')
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : 'Unable to load findings')
+      setError(
+        caught instanceof Error
+          ? caught.message
+          : 'Unable to load findings',
+      )
     } finally {
       setLoading(false)
     }
-  }, [currentCase])
-
-  useEffect(() => {
-    if (!currentCase) return
-    let cancelled = false
-    apiGet<Finding[]>(`/cases/${currentCase.id}/findings`)
-      .then((records) => {
-        if (!cancelled) {
-          setFindings(records)
-          setError('')
-        }
-      })
-      .catch((caught) => {
-        if (!cancelled) {
-          setError(caught instanceof Error ? caught.message : 'Unable to load findings')
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false)
-      })
-    return () => { cancelled = true }
   }, [currentCase])
 
   async function createFinding(event: FormEvent<HTMLFormElement>) {
@@ -2585,14 +2895,23 @@ function ReportsWorkspace({
   currentCase: CaseRecord | null
   onEvidenceReference: (reference: string) => void
 }) {
-  const [report, setReport] = useState<InvestigationReport | null>(null)
+  const [report, setReport] =
+    useState<InvestigationReport | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
+  const [reauthOpen, setReauthOpen] = useState(false)
+  const [reauthPassword, setReauthPassword] = useState('')
+  const [reauthError, setReauthError] = useState('')
+
   useEffect(() => {
     if (!currentCase) return
+
     let cancelled = false
-    apiGet<InvestigationReport>(`/cases/${currentCase.id}/report`)
+
+    apiGet<InvestigationReport>(
+      `/cases/${currentCase.id}/report`,
+    )
       .then((value) => {
         if (!cancelled) {
           setReport(value)
@@ -2600,13 +2919,61 @@ function ReportsWorkspace({
         }
       })
       .catch((caught) => {
-        if (!cancelled) setError(caught instanceof Error ? caught.message : 'Unable to generate report')
+        if (!cancelled) {
+          setError(
+            caught instanceof Error
+              ? caught.message
+              : 'Unable to generate report',
+          )
+        }
       })
       .finally(() => {
-        if (!cancelled) setLoading(false)
+        if (!cancelled) {
+          setLoading(false)
+        }
       })
-    return () => { cancelled = true }
+
+    return () => {
+      cancelled = true
+    }
   }, [currentCase])
+
+  async function authorizePrint(
+    event: FormEvent<HTMLFormElement>,
+  ) {
+    event.preventDefault()
+
+    if (!currentCase) return
+
+    const password = reauthPassword
+
+    setReauthPassword('')
+    setReauthError('')
+
+    try {
+      await apiPost(
+        '/auth/reauthenticate',
+        {
+          password,
+        },
+      )
+
+      await apiPost(
+        `/cases/${currentCase.id}/report/print-authorize`,
+        {},
+      )
+
+      setReauthOpen(false)
+
+      window.print()
+    } catch (caught) {
+      setReauthError(
+        caught instanceof Error
+          ? caught.message
+          : 'Unable to authorize printing',
+      )
+    }
+  }
 
   return (
     <>
@@ -2615,67 +2982,243 @@ function ReportsWorkspace({
         title="Reports"
         description="Generate a printable investigation summary from authored findings and their explicit evidence citations."
       />
-      {!currentCase ? <EmptySelection /> : loading ? (
-        <section className="panel"><EvidenceState title="Generating report…" detail="Resolving findings and provenance." live /></section>
+
+      {!currentCase ? (
+        <EmptySelection />
+      ) : loading ? (
+        <section className="panel">
+          <EvidenceState
+            title="Generating report…"
+            detail="Resolving findings and provenance."
+            live
+          />
+        </section>
       ) : error ? (
-        <section className="panel"><EvidenceState title="Report could not be generated" detail={error} error /></section>
-      ) : report && (
-        <article className="panel printable-report">
-          <div className="report-actions no-print">
-            <span>Browser print preserves this deterministic view.</span>
-            <button className="primary-button" type="button" onClick={() => window.print()}>
-              Print report
-            </button>
-          </div>
-          <header className="report-header">
-            <p className="eyebrow">FORENSIGHT AI · INVESTIGATION REPORT</p>
-            <h2>{report.case.name}</h2>
-            <dl className="report-meta">
-              <div><dt>Case ID</dt><dd>{report.case.case_identifier}</dd></div>
-              <div><dt>Investigator</dt><dd>{report.investigator.display_name} ({report.investigator.username})</dd></div>
-              <div><dt>Generated</dt><dd>{new Date(report.generated_at).toLocaleString()}</dd></div>
-            </dl>
-          </header>
-          {report.warnings.map((warning) => (
-            <div className="message warning" key={warning}>{warning}</div>
-          ))}
-          <section className="report-section">
-            <h3>Findings</h3>
-            {report.findings.length === 0 ? <p>No findings selected.</p> : report.findings.map((finding, index) => (
-              <article className="report-finding" key={finding.id}>
-                <h4>{index + 1}. {finding.title} <span>({finding.status})</span></h4>
-                <p>{finding.description || 'No description provided.'}</p>
-                <strong>Supporting evidence</strong>
-                <div className="report-reference-list">
-                  {finding.evidence.length === 0 ? <span>None attached</span> : finding.evidence.map((evidence) => (
-                    <button
-                      className="text-button no-print-link"
-                      type="button"
-                      key={evidence.id}
-                      onClick={() => onEvidenceReference(evidence.evidence_reference)}
-                    >
-                      {evidence.evidence_reference} · {evidence.artifact_type}
-                    </button>
-                  ))}
+        <section className="panel">
+          <EvidenceState
+            title="Report could not be generated"
+            detail={error}
+            error
+          />
+        </section>
+      ) : (
+        report && (
+          <article className="panel printable-report">
+            <div className="report-actions no-print">
+              <span>
+                Browser print preserves this deterministic view.
+              </span>
+
+              <button
+                className="primary-button"
+                type="button"
+                onClick={() => {
+                  setReauthError('')
+                  setReauthPassword('')
+                  setReauthOpen(true)
+                }}
+              >
+                Print report
+              </button>
+            </div>
+
+            <header className="report-header">
+              <p className="eyebrow">
+                FORENSIGHT AI · INVESTIGATION REPORT
+              </p>
+
+              <h2>{report.case.name}</h2>
+
+              <dl className="report-meta">
+                <div>
+                  <dt>Case ID</dt>
+                  <dd>{report.case.case_identifier}</dd>
                 </div>
-              </article>
-            ))}
-          </section>
-          <section className="report-section">
-            <h3>Source provenance</h3>
-            {report.sources.map((source) => (
-              <div className="report-source" key={source.id}>
-                <strong>{source.label}</strong>
-                <span>Source ID: {source.id}</span>
-                <span>SHA-256: {source.sha256 ?? 'Not available'}</span>
-                <span>Parser: {source.parser_identifier ?? 'Not recorded'} {source.parser_version ?? ''}</span>
+
+                <div>
+                  <dt>Investigator</dt>
+                  <dd>
+                    {report.investigator.display_name}{' '}
+                    ({report.investigator.username})
+                  </dd>
+                </div>
+
+                <div>
+                  <dt>Generated</dt>
+                  <dd>
+                    {new Date(
+                      report.generated_at,
+                    ).toLocaleString()}
+                  </dd>
+                </div>
+              </dl>
+            </header>
+
+            {report.warnings.map((warning) => (
+              <div
+                className="message warning"
+                key={warning}
+              >
+                {warning}
               </div>
             ))}
-          </section>
-          <footer className="report-watermark">
-            Generated by ForenSight AI for {report.investigator.username} · {report.case.case_identifier} · Evidence remains immutable.
-          </footer>
-        </article>
+
+            <section className="report-section">
+              <h3>Findings</h3>
+
+              {report.findings.length === 0 ? (
+                <p>No findings selected.</p>
+              ) : (
+                report.findings.map((finding, index) => (
+                  <article
+                    className="report-finding"
+                    key={finding.id}
+                  >
+                    <h4>
+                      {index + 1}. {finding.title}{' '}
+                      <span>({finding.status})</span>
+                    </h4>
+
+                    <p>
+                      {finding.description ||
+                        'No description provided.'}
+                    </p>
+
+                    <strong>Supporting evidence</strong>
+
+                    <div className="report-reference-list">
+                      {finding.evidence.length === 0 ? (
+                        <span>None attached</span>
+                      ) : (
+                        finding.evidence.map((evidence) => (
+                          <button
+                            className="text-button no-print-link"
+                            type="button"
+                            key={evidence.id}
+                            onClick={() =>
+                              onEvidenceReference(
+                                evidence.evidence_reference,
+                              )
+                            }
+                          >
+                            {evidence.evidence_reference} ·{' '}
+                            {evidence.artifact_type}
+                          </button>
+                        ))
+                      )}
+                    </div>
+                  </article>
+                ))
+              )}
+            </section>
+
+            <section className="report-section">
+              <h3>Source provenance</h3>
+
+              {report.sources.map((source) => (
+                <div
+                  className="report-source"
+                  key={source.id}
+                >
+                  <strong>{source.label}</strong>
+
+                  <span>
+                    Source ID: {source.id}
+                  </span>
+
+                  <span>
+                    SHA-256:{' '}
+                    {source.sha256 ?? 'Not available'}
+                  </span>
+
+                  <span>
+                    Parser:{' '}
+                    {source.parser_identifier ??
+                      'Not recorded'}{' '}
+                    {source.parser_version ?? ''}
+                  </span>
+                </div>
+              ))}
+            </section>
+
+            <footer className="report-watermark">
+              Generated by ForenSight AI for{' '}
+              {report.investigator.username} ·{' '}
+              {report.case.case_identifier} · Evidence remains
+              immutable.
+            </footer>
+          </article>
+        )
+      )}
+
+      {reauthOpen && (
+        <div
+          className="drawer-backdrop no-print"
+          role="presentation"
+        >
+          <form
+            className="reauth-dialog"
+            onSubmit={(event) =>
+              void authorizePrint(event)
+            }
+          >
+            <p className="eyebrow">
+              HIGH-RISK ACTION
+            </p>
+
+            <h2>Reauthenticate to print</h2>
+
+            <p>
+              Enter your current password. Authorization expires
+              within two minutes and is bound to this session.
+            </p>
+
+            <label>
+              Password
+
+              <input
+                type="password"
+                value={reauthPassword}
+                onChange={(event) =>
+                  setReauthPassword(event.target.value)
+                }
+                autoComplete="current-password"
+                required
+                autoFocus
+              />
+            </label>
+
+            {reauthError && (
+              <div
+                className="message error"
+                role="alert"
+              >
+                {reauthError}
+              </div>
+            )}
+
+            <div className="inline-actions">
+              <button
+                className="primary-button"
+                type="submit"
+              >
+                Authorize and print
+              </button>
+
+              <button
+                className="topbar-button"
+                type="button"
+                onClick={() => {
+                  setReauthPassword('')
+                  setReauthError('')
+                  setReauthOpen(false)
+                }}
+              >
+                Cancel
+              </button>
+            </div>
+          </form>
+        </div>
       )}
     </>
   )

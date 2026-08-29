@@ -24,4 +24,8 @@ def test_database_is_at_migration_head_with_expected_tables() -> None:
         "evidence_items",
         "findings",
         "finding_evidence",
+        "case_access_grants",
+        "proposed_findings",
+        "proposed_finding_evidence",
+        "audit_events",
     } == table_names

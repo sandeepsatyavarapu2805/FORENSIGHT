@@ -10,7 +10,7 @@ from app.analysis.engine import (
     build_timeline,
     source_warnings,
 )
-from app.api.cases import _owned_case
+from app.access import require_case_view
 from app.api.dependencies import get_current_user
 from app.db.session import get_db
 from app.models.evidence_item import EvidenceItem
@@ -64,10 +64,10 @@ def analysis_overview(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> AnalysisOverviewResponse:
-    _owned_case(db, case_id, current_user.id)
+    access = require_case_view(db, case_id, current_user.id)
 
-    evidence = _case_evidence(db, case_id)
-    sources = _case_sources(db, case_id)
+    evidence = _case_evidence(db, access.evidence_case_id)
+    sources = _case_sources(db, access.evidence_case_id)
 
     entities = build_entities(evidence)
     timeline = build_timeline(evidence)

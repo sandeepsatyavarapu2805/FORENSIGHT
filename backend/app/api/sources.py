@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.cases import _owned_case
+from app.access import require_case_view, require_original_owner
 from app.api.dependencies import get_current_user
 from app.db.session import get_db
 from app.ingestion.processor import latest_job, process_source
@@ -42,11 +42,25 @@ def _owned_source(
             EvidenceSource.id == source_id,
             EvidenceSource.case_id == case_id,
             Case.owner_id == owner_id,
+            Case.case_kind == "original",
         )
     )
     if source is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Source not found")
     return source
+
+
+def _view_source(
+    db: Session, case_id: uuid.UUID, source_id: uuid.UUID, user_id: uuid.UUID
+) -> tuple[EvidenceSource, uuid.UUID]:
+    access = require_case_view(db, case_id, user_id)
+    source = db.scalar(select(EvidenceSource).where(
+        EvidenceSource.id == source_id,
+        EvidenceSource.case_id == access.evidence_case_id,
+    ))
+    if source is None:
+        raise HTTPException(status_code=404, detail="Source not found")
+    return source, access.evidence_case_id
 
 @router.post("", response_model=SourceResponse, status_code=status.HTTP_201_CREATED)
 def create_source(
@@ -55,7 +69,7 @@ def create_source(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> EvidenceSource:
-    _owned_case(db, case_id, current_user.id)
+    require_original_owner(db, case_id, current_user.id)
     source = EvidenceSource(case_id=case_id, **payload.model_dump())
     db.add(source)
     db.commit()
@@ -69,11 +83,11 @@ def list_sources(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> list[EvidenceSource]:
-    _owned_case(db, case_id, current_user.id)
+    access = require_case_view(db, case_id, current_user.id)
     return list(
         db.scalars(
             select(EvidenceSource)
-            .where(EvidenceSource.case_id == case_id)
+            .where(EvidenceSource.case_id == access.evidence_case_id)
             .order_by(EvidenceSource.created_at.desc())
         )
     )
@@ -86,7 +100,8 @@ def get_source(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> EvidenceSource:
-    return _owned_source(db, case_id, source_id, current_user.id)
+    source, _ = _view_source(db, case_id, source_id, current_user.id)
+    return source
 
 
 @router.patch("/{source_id}", response_model=SourceResponse)
@@ -225,7 +240,7 @@ def get_processing_status(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> ProcessingJob | None:
-    source = _owned_source(db, case_id, source_id, current_user.id)
+    source, evidence_case_id = _view_source(db, case_id, source_id, current_user.id)
     return latest_job(db, source.id)
 
 
@@ -238,12 +253,12 @@ def list_source_evidence(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> list[EvidenceItem]:
-    source = _owned_source(db, case_id, source_id, current_user.id)
+    source, evidence_case_id = _view_source(db, case_id, source_id, current_user.id)
     return list(
         db.scalars(
             select(EvidenceItem)
             .where(
-                EvidenceItem.case_id == case_id,
+                EvidenceItem.case_id == evidence_case_id,
                 EvidenceItem.source_id == source.id,
             )
             .order_by(EvidenceItem.imported_at, EvidenceItem.id)

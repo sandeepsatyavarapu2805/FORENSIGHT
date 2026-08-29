@@ -58,6 +58,9 @@ class CaseResponse(CaseWrite):
     owner_id: uuid.UUID
     created_at: datetime
     updated_at: datetime
+    case_kind: Literal["original", "investigation_copy"]
+    parent_case_id: uuid.UUID | None
+    evidence_case_id: uuid.UUID | None
 
 
 class SourceCreate(BaseModel):
@@ -292,6 +295,7 @@ class FindingResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     evidence: list[FindingEvidenceResponse]
+    origin_proposal_id: uuid.UUID | None
 
 
 class ReportSourceResponse(BaseModel):
@@ -310,3 +314,104 @@ class InvestigationReportResponse(BaseModel):
     findings: list[FindingResponse]
     sources: list[ReportSourceResponse]
     warnings: list[str]
+
+
+class GrantCreate(BaseModel):
+    recipient_username: str = Field(min_length=1, max_length=100)
+    duration_hours: Literal[24, 168, 720]
+
+
+class GrantActivate(BaseModel):
+    code: str = Field(min_length=20, max_length=200)
+
+
+class GrantResponse(BaseModel):
+    id: uuid.UUID
+    case_id: uuid.UUID
+    recipient_id: uuid.UUID
+    recipient_username: str
+    created_at: datetime
+    expires_at: datetime
+    activated_at: datetime | None
+    revoked_at: datetime | None
+    status: Literal["pending", "active", "expired", "revoked"]
+
+
+class GrantCreatedResponse(GrantResponse):
+    access_code: str
+
+
+class AccessibleCaseResponse(BaseModel):
+    case: CaseResponse
+    grant_id: uuid.UUID
+    access_level: Literal["temporary_read_only"]
+    expires_at: datetime
+
+
+class InvestigationCopyResponse(BaseModel):
+    case: CaseResponse
+    original_case: CaseResponse
+
+
+class ProposedFindingCreate(BaseModel):
+    title: str = Field(min_length=1, max_length=200)
+    description: str = Field(default="", max_length=10_000)
+    evidence_references: list[str] = Field(default_factory=list, max_length=200)
+
+    @field_validator("title")
+    @classmethod
+    def proposal_title_not_blank(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("title must not be blank")
+        return value
+
+
+class ProposedFindingUpdate(BaseModel):
+    title: str | None = Field(default=None, min_length=1, max_length=200)
+    description: str | None = Field(default=None, max_length=10_000)
+    evidence_references: list[str] | None = Field(default=None, max_length=200)
+
+
+class ProposedFindingResponse(BaseModel):
+    id: uuid.UUID
+    source_copy_case_id: uuid.UUID
+    original_case_id: uuid.UUID
+    submitted_by_id: uuid.UUID
+    title: str
+    description: str
+    status: Literal["draft", "submitted", "accepted", "rejected"]
+    evidence: list[FindingEvidenceResponse]
+    created_at: datetime
+    updated_at: datetime
+    submitted_at: datetime | None
+    reviewed_at: datetime | None
+    reviewed_by_id: uuid.UUID | None
+    accepted_finding_id: uuid.UUID | None
+
+
+class ReauthenticateRequest(BaseModel):
+    password: str = Field(min_length=1, max_length=1024)
+
+
+class ReauthenticateResponse(BaseModel):
+    reauthenticated_until: datetime
+
+
+class PrintAuthorizationResponse(BaseModel):
+    authorized: bool
+    authorized_at: datetime
+
+
+class AuditEventResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    user_id: uuid.UUID | None
+    case_id: uuid.UUID | None
+    action: str
+    target_type: str | None
+    target_id: uuid.UUID | None
+    success: bool
+    event_metadata: dict[str, object]
+    occurred_at: datetime
