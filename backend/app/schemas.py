@@ -152,3 +152,8 @@ class EvidencePageResponse(BaseModel):
     total: int
     offset: int
     limit: int
+
+
+class EvidenceFilterOptionsResponse(BaseModel):
+    artifact_types: list[str]
+    applications: list[str]
