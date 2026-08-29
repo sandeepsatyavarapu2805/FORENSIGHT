@@ -157,3 +157,38 @@ class EvidencePageResponse(BaseModel):
 class EvidenceFilterOptionsResponse(BaseModel):
     artifact_types: list[str]
     applications: list[str]
+
+
+class AnalysisEntityResponse(BaseModel):
+    key: str
+    entity_type: str
+    value: str
+    evidence_ids: list[str]
+    evidence_references: list[str]
+    occurrence_count: int
+
+
+class TimelineEntryResponse(BaseModel):
+    evidence_id: str
+    evidence_reference: str
+    source_id: str
+    artifact_type: str
+    application: str | None
+    occurred_at: datetime
+    searchable_text: str
+
+
+class RelationshipResponse(BaseModel):
+    source_key: str
+    target_key: str
+    relationship_type: str
+    evidence_ids: list[str]
+    evidence_references: list[str]
+    occurrence_count: int
+
+
+class AnalysisOverviewResponse(BaseModel):
+    entities: list[AnalysisEntityResponse]
+    timeline: list[TimelineEntryResponse]
+    relationships: list[RelationshipResponse]
+    warnings: list[str]

@@ -86,9 +86,50 @@ type EvidenceFilterOptions = {
   applications: string[]
 }
 
+type AnalysisEntity = {
+  key: string
+  entity_type: string
+  value: string
+  evidence_ids: string[]
+  evidence_references: string[]
+  occurrence_count: number
+}
+
+type TimelineEntry = {
+  evidence_id: string
+  evidence_reference: string
+  source_id: string
+  artifact_type: string
+  application: string | null
+  occurred_at: string
+  searchable_text: string
+}
+
+type AnalysisRelationship = {
+  source_key: string
+  target_key: string
+  relationship_type: string
+  evidence_ids: string[]
+  evidence_references: string[]
+  occurrence_count: number
+}
+
+type AnalysisOverview = {
+  entities: AnalysisEntity[]
+  timeline: TimelineEntry[]
+  relationships: AnalysisRelationship[]
+  warnings: string[]
+}
+
 type View = 'Overview' | 'Case Information' | 'Import / Sources' | string
 
-const primaryNavigation = ['Overview', 'Evidence', 'Findings', 'Reports']
+const primaryNavigation = [
+  'Overview',
+  'Evidence',
+  'Analysis',
+  'Findings',
+  'Reports',
+]
 
 const secondaryNavigation = [
   'Case Information',
@@ -267,6 +308,15 @@ function App() {
   const [fullEvidence, setFullEvidence] =
     useState<EvidenceItem | null>(null)
 
+  const [analysisData, setAnalysisData] =
+    useState<AnalysisOverview | null>(null)
+
+  const [analysisLoading, setAnalysisLoading] =
+    useState(false)
+
+  const [analysisError, setAnalysisError] =
+    useState('')
+
   const loadCases = useCallback(async () => {
     const records = await apiGet<CaseRecord[]>('/cases')
 
@@ -278,6 +328,43 @@ function App() {
         : null,
     )
   }, [])
+
+  useEffect(() => {
+    if (view !== 'Analysis' || !currentCase) {
+      return
+    }
+
+    let cancelled = false
+
+    apiGet<AnalysisOverview>(
+      `/cases/${currentCase.id}/analysis`,
+    )
+      .then((result) => {
+        if (!cancelled) {
+          setAnalysisData(result)
+          setAnalysisError('')
+        }
+      })
+      .catch((caught) => {
+        if (!cancelled) {
+          setAnalysisData(null)
+          setAnalysisError(
+            caught instanceof Error
+              ? caught.message
+              : 'Unable to load analysis',
+          )
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setAnalysisLoading(false)
+        }
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [currentCase, view])
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme
@@ -818,6 +905,7 @@ function App() {
   const functionalView =
     view === 'Overview' ||
     view === 'Evidence' ||
+    view === 'Analysis' ||
     view === 'Case Information' ||
     view === 'Import / Sources'
 
@@ -853,6 +941,11 @@ function App() {
                   if (item === 'Evidence') {
                     setEvidenceLoading(true)
                     setEvidenceError('')
+                  }
+
+                  if (item === 'Analysis') {
+                    setAnalysisLoading(true)
+                    setAnalysisError('')
                   }
 
                   setView(item)
@@ -1199,6 +1292,22 @@ function App() {
               onPreview={(item) =>
                 void openEvidencePreview(item)
               }
+            />
+          )}
+
+          {view === 'Analysis' && (
+            <AnalysisWorkspace
+              currentCase={currentCase}
+              data={analysisData}
+              loading={analysisLoading}
+              error={analysisError}
+              onEvidenceReference={(reference) => {
+                setEvidenceSearch(reference)
+                setEvidenceOffset(0)
+                setEvidenceLoading(true)
+                setEvidenceError('')
+                setView('Evidence')
+              }}
             />
           )}
 
@@ -2122,6 +2231,282 @@ function EvidenceWorkspace({
           )}
       </section>
     </>
+  )
+}
+
+function AnalysisWorkspace({
+  currentCase,
+  data,
+  loading,
+  error,
+  onEvidenceReference,
+}: {
+  currentCase: CaseRecord | null
+  data: AnalysisOverview | null
+  loading: boolean
+  error: string
+  onEvidenceReference: (reference: string) => void
+}) {
+  if (!currentCase) {
+    return (
+      <>
+        <PageHeader
+          eyebrow="DETERMINISTIC ANALYSIS"
+          title="Analysis"
+          description="Review evidence-backed entities, timeline events, and relationships."
+        />
+        <EmptySelection />
+      </>
+    )
+  }
+
+  if (loading) {
+    return (
+      <>
+        <PageHeader
+          eyebrow="DETERMINISTIC ANALYSIS"
+          title="Analysis"
+          description="Review evidence-backed entities, timeline events, and relationships."
+        />
+        <section className="panel">
+          <EvidenceState
+            title="Loading analysis…"
+            detail="Deriving analysis from immutable evidence."
+            live
+          />
+        </section>
+      </>
+    )
+  }
+
+  if (error) {
+    return (
+      <>
+        <PageHeader
+          eyebrow="DETERMINISTIC ANALYSIS"
+          title="Analysis"
+          description="Review evidence-backed entities, timeline events, and relationships."
+        />
+        <section className="panel">
+          <EvidenceState
+            title="Analysis could not be loaded"
+            detail={error}
+            error
+          />
+        </section>
+      </>
+    )
+  }
+
+  const entities = data?.entities ?? []
+  const timeline = data?.timeline ?? []
+  const relationships = data?.relationships ?? []
+  const warnings = data?.warnings ?? []
+
+  return (
+    <>
+      <PageHeader
+        eyebrow="DETERMINISTIC ANALYSIS"
+        title="Analysis"
+        description="Evidence-derived entities, chronological activity, and co-occurrence relationships. Every result remains traceable to source evidence."
+      />
+
+      {warnings.map((warning) => (
+        <div
+          className="message warning analysis-warning"
+          key={warning}
+        >
+          {warning}
+        </div>
+      ))}
+
+      <div className="analysis-summary">
+        <div>
+          <span>Entities</span>
+          <strong>{entities.length}</strong>
+        </div>
+
+        <div>
+          <span>Timeline events</span>
+          <strong>{timeline.length}</strong>
+        </div>
+
+        <div>
+          <span>Relationships</span>
+          <strong>{relationships.length}</strong>
+        </div>
+      </div>
+
+      <div className="analysis-grid">
+        <section className="panel analysis-section">
+          <h2>Entities</h2>
+
+          {entities.length === 0 ? (
+            <p className="muted">
+              No explicitly normalized entities are available.
+            </p>
+          ) : (
+            <div className="analysis-list">
+              {entities.map((entity) => (
+                <article
+                  className="analysis-card"
+                  key={entity.key}
+                >
+                  <div className="analysis-card-heading">
+                    <div>
+                      <span className="analysis-kind">
+                        {entity.entity_type}
+                      </span>
+
+                      <strong>{entity.value}</strong>
+                    </div>
+
+                    <span>
+                      {entity.occurrence_count} occurrence
+                      {entity.occurrence_count === 1 ? '' : 's'}
+                    </span>
+                  </div>
+
+                  <EvidenceReferences
+                    references={entity.evidence_references}
+                    onOpen={onEvidenceReference}
+                  />
+                </article>
+              ))}
+            </div>
+          )}
+        </section>
+
+        <section className="panel analysis-section">
+          <h2>Relationships</h2>
+
+          {relationships.length === 0 ? (
+            <p className="muted">
+              No evidence-backed entity relationships are available.
+            </p>
+          ) : (
+            <div className="analysis-list">
+              {relationships.map((relationship) => (
+                <article
+                  className="analysis-card"
+                  key={`${relationship.source_key}-${relationship.target_key}`}
+                >
+                  <div className="relationship-line">
+                    <strong>
+                      {relationship.source_key}
+                    </strong>
+
+                    <span>↔</span>
+
+                    <strong>
+                      {relationship.target_key}
+                    </strong>
+                  </div>
+
+                  <p className="muted small-text">
+                    {relationship.relationship_type.replaceAll(
+                      '_',
+                      ' ',
+                    )}{' '}
+                    · {relationship.occurrence_count} shared
+                    evidence record
+                    {relationship.occurrence_count === 1 ? '' : 's'}
+                  </p>
+
+                  <EvidenceReferences
+                    references={
+                      relationship.evidence_references
+                    }
+                    onOpen={onEvidenceReference}
+                  />
+                </article>
+              ))}
+            </div>
+          )}
+        </section>
+      </div>
+
+      <section className="panel analysis-section analysis-timeline">
+        <h2>Timeline</h2>
+
+        {timeline.length === 0 ? (
+          <p className="muted">
+            No timestamped evidence is available.
+          </p>
+        ) : (
+          <div className="timeline-list">
+            {timeline.map((entry) => (
+              <article
+                className="timeline-entry"
+                key={entry.evidence_id}
+              >
+                <time>
+                  {new Date(
+                    entry.occurred_at,
+                  ).toLocaleString()}
+                </time>
+
+                <div>
+                  <strong>
+                    {entry.artifact_type}
+                    {entry.application
+                      ? ` · ${entry.application}`
+                      : ''}
+                  </strong>
+
+                  <p>
+                    {entry.searchable_text ||
+                      'No searchable text'}
+                  </p>
+
+                  <button
+                    type="button"
+                    className="text-button"
+                    onClick={() =>
+                      onEvidenceReference(
+                        entry.evidence_reference,
+                      )
+                    }
+                  >
+                    {entry.evidence_reference}
+                  </button>
+                </div>
+              </article>
+            ))}
+          </div>
+        )}
+      </section>
+
+      <p className="immutable-note analysis-note">
+        Analysis is derived from immutable evidence.
+        Free-text names, phone numbers, or relationships are
+        not guessed unless explicitly normalized by a parser.
+      </p>
+    </>
+  )
+}
+
+
+function EvidenceReferences({
+  references,
+  onOpen,
+}: {
+  references: string[]
+  onOpen: (reference: string) => void
+}) {
+  return (
+    <div className="analysis-evidence-links">
+      {references.map((reference) => (
+        <button
+          type="button"
+          className="text-button"
+          key={reference}
+          onClick={() => onOpen(reference)}
+        >
+          {reference}
+        </button>
+      ))}
+    </div>
   )
 }
 
