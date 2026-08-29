@@ -49,6 +49,9 @@ build/
 *.log
 logs/
 
+# Uploaded forensic source files (never commit)
+backend/var/
+
 
 # =========================
 # Temporary Files

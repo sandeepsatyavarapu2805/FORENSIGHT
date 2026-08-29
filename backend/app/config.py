@@ -5,6 +5,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy import URL
 
 ENV_FILE = Path(__file__).resolve().parents[1] / ".env"
+DEFAULT_UPLOAD_STORAGE_PATH = Path(__file__).resolve().parents[1] / "var" / "uploads"
 
 
 class Settings(BaseSettings):
@@ -17,6 +18,12 @@ class Settings(BaseSettings):
     frontend_origin: str
     session_cookie_secure: bool = False
     session_lifetime_hours: int = 12
+    upload_storage_path: Path = DEFAULT_UPLOAD_STORAGE_PATH
+    upload_max_bytes: int = 536_870_912
+    archive_max_members: int = 100_000
+    archive_max_uncompressed_bytes: int = 2_147_483_648
+    archive_max_compression_ratio: int = 1_000
+    archive_max_report_xml_bytes: int = 268_435_456
 
     model_config = SettingsConfigDict(
         env_file=ENV_FILE,

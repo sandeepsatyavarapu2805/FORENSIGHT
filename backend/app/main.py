@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
-from app.api import auth, cases, sources
+from app.api import auth, cases, evidence, sources
 
 app = FastAPI(
     title="ForenSight AI API",
@@ -20,6 +20,7 @@ app.add_middleware(
 app.include_router(auth.router)
 app.include_router(cases.router)
 app.include_router(sources.router)
+app.include_router(evidence.router)
 
 
 @app.get("/health")

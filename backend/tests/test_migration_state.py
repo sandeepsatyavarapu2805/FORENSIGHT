@@ -14,4 +14,12 @@ def test_database_is_at_migration_head_with_expected_tables() -> None:
         table_names = set(inspect(connection).get_table_names())
 
     assert current_revision == expected_head
-    assert {"alembic_version", "users", "cases", "evidence_sources", "auth_sessions"} == table_names
+    assert {
+        "alembic_version",
+        "users",
+        "cases",
+        "evidence_sources",
+        "auth_sessions",
+        "processing_jobs",
+        "evidence_items",
+    } == table_names

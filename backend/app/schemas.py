@@ -92,5 +92,63 @@ class SourceResponse(SourceCreate):
 
     id: uuid.UUID
     case_id: uuid.UUID
+    original_filename: str | None
+    file_size: int | None
+    sha256: str | None
+    imported_by_id: uuid.UUID | None
+    imported_at: datetime | None
+    parser_identifier: str | None
+    parser_version: str | None
+    processing_state: str
+    processing_stage: str | None
+    is_partial: bool
+    error_summary: str | None
+    evidence_count: int
+    evidence_counts: dict[str, int]
     created_at: datetime
     updated_at: datetime
+
+
+class ProcessingJobResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    source_id: uuid.UUID
+    status: str
+    stage: str | None
+    progress: int | None
+    diagnostics: list[dict[str, object]]
+    stage_history: list[str]
+    error_summary: str | None
+    created_at: datetime
+    started_at: datetime | None
+    completed_at: datetime | None
+
+
+class EvidenceItemSummary(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    evidence_reference: str
+    case_id: uuid.UUID
+    source_id: uuid.UUID
+    artifact_type: str
+    original_record_id: str
+    occurred_at: datetime | None
+    application: str | None
+    searchable_text: str
+    parser_identifier: str
+    parser_version: str
+    imported_at: datetime
+
+
+class EvidenceItemResponse(EvidenceItemSummary):
+    data: dict[str, object]
+    raw_metadata: dict[str, object]
+
+
+class EvidencePageResponse(BaseModel):
+    items: list[EvidenceItemSummary]
+    total: int
+    offset: int
+    limit: int

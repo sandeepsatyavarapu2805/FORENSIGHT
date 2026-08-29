@@ -52,20 +52,15 @@ select {
   min-height: 100vh;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #10141a;
-    --surface: #151b22;
-    --surface-hover: #1d2530;
-
-    --text: #c7d0db;
-    --text-strong: #f3f6f9;
-    --text-muted: #8f9baa;
-
-    --border: #2b3542;
-
-    --accent: #5894bf;
-    --accent-soft: #182b39;
-    --accent-border: #355d79;
-  }
+:root[data-theme="dark"] {
+  --bg: #10141a;
+  --surface: #151b22;
+  --surface-hover: #1d2530;
+  --text: #c7d0db;
+  --text-strong: #f3f6f9;
+  --text-muted: #8f9baa;
+  --border: #2b3542;
+  --accent: #5894bf;
+  --accent-soft: #182b39;
+  --accent-border: #355d79;
 }

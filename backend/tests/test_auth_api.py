@@ -38,7 +38,9 @@ def test_login_me_and_logout(
     logout = client.post("/auth/logout")
     assert logout.status_code == 204
     assert client.get("/auth/me").status_code == 401
-    assert db.scalar(select(AuthSession)) is None
+    assert (
+        db.scalar(select(AuthSession).where(AuthSession.user_id == user.id)) is None
+    )
 
 
 def test_login_failure_uses_generic_error(

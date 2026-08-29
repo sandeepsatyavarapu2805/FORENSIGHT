@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
-import { ApiError, apiGet, apiPatch, apiPost } from './api/client'
+import { ApiError, apiGet, apiPatch, apiPost, apiUpload } from './api/client'
 import './App.css'
 
 type User = { id: string; username: string; display_name: string }
@@ -17,13 +17,65 @@ type EvidenceSource = {
   case_id: string
   label: string
   description: string | null
+  original_filename: string | null
+  file_size: number | null
+  sha256: string | null
+  imported_at: string | null
+  parser_identifier: string | null
+  parser_version: string | null
+  processing_state: string
+  processing_stage: string | null
+  is_partial: boolean
+  error_summary: string | null
+  evidence_count: number
+  evidence_counts: Record<string, number>
   created_at: string
   updated_at: string
+}
+type ProcessingJob = {
+  id: string
+  status: string
+  stage: string | null
+  progress: number | null
+  diagnostics: Array<{ severity?: string; code?: string; message?: string; original_reference?: string | null }>
+  stage_history: string[]
+  error_summary: string | null
+}
+type EvidenceSummary = {
+  id: string
+  evidence_reference: string
+  case_id: string
+  source_id: string
+  artifact_type: string
+  original_record_id: string
+  occurred_at: string | null
+  application: string | null
+  searchable_text: string
+  parser_identifier: string
+  parser_version: string
+  imported_at: string
+}
+type EvidenceItem = EvidenceSummary & {
+  data: Record<string, unknown>
+  raw_metadata: Record<string, unknown>
+}
+type EvidencePage = {
+  items: EvidenceSummary[]
+  total: number
+  offset: number
+  limit: number
 }
 type View = 'Overview' | 'Case Information' | 'Import / Sources' | string
 
 const primaryNavigation = ['Overview', 'Evidence', 'Findings', 'Reports']
 const secondaryNavigation = ['Case Information', 'Case Access / Sharing', 'Import / Sources', 'Settings']
+const evidencePageSize = 25
+
+function initialTheme(): 'light' | 'dark' {
+  const saved = localStorage.getItem('forensight-theme')
+  if (saved === 'light' || saved === 'dark') return saved
+  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+}
 
 function LoginScreen({ onLogin }: { onLogin: (user: User) => void }) {
   const [username, setUsername] = useState('')
@@ -71,15 +123,34 @@ function App() {
   const [currentCase, setCurrentCase] = useState<CaseRecord | null>(null)
   const [sources, setSources] = useState<EvidenceSource[]>([])
   const [selectedSource, setSelectedSource] = useState<EvidenceSource | null>(null)
+  const [selectedFile, setSelectedFile] = useState<File | null>(null)
+  const [processingJob, setProcessingJob] = useState<ProcessingJob | null>(null)
+  const [ingestionBusy, setIngestionBusy] = useState(false)
   const [view, setView] = useState<View>('Overview')
   const [backendStatus, setBackendStatus] = useState('Checking')
   const [error, setError] = useState('')
+  const [theme, setTheme] = useState<'light' | 'dark'>(initialTheme)
+  const [evidenceSourceId, setEvidenceSourceId] = useState('')
+  const [evidencePage, setEvidencePage] = useState<EvidencePage | null>(null)
+  const [evidenceOffset, setEvidenceOffset] = useState(0)
+  const [evidenceLoading, setEvidenceLoading] = useState(false)
+  const [evidenceError, setEvidenceError] = useState('')
+  const [evidenceSearch, setEvidenceSearch] = useState('')
+  const [evidenceType, setEvidenceType] = useState('')
+  const [evidenceDateFrom, setEvidenceDateFrom] = useState('')
+  const [evidenceDateTo, setEvidenceDateTo] = useState('')
+  const [previewEvidence, setPreviewEvidence] = useState<EvidenceItem | null>(null)
 
   const loadCases = useCallback(async () => {
     const records = await apiGet<CaseRecord[]>('/cases')
     setCases(records)
     setCurrentCase((selected) => selected ? records.find((item) => item.id === selected.id) ?? null : null)
   }, [])
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme
+    localStorage.setItem('forensight-theme', theme)
+  }, [theme])
 
   useEffect(() => {
     apiGet<{ status: string }>('/health')
@@ -99,6 +170,12 @@ function App() {
         if (!cancelled) {
           setSources(records)
           setSelectedSource(null)
+          setSelectedFile(null)
+          setProcessingJob(null)
+          setEvidenceSourceId((selected) => records.some((source) => source.id === selected) ? selected : '')
+          setEvidenceOffset(0)
+          setEvidencePage(null)
+          setPreviewEvidence(null)
         }
       })
       .catch((caught) => {
@@ -106,6 +183,40 @@ function App() {
       })
     return () => { cancelled = true }
   }, [currentCase])
+
+  useEffect(() => {
+    if (view !== 'Evidence' || !currentCase) return
+    let cancelled = false
+    const parameters = new URLSearchParams({
+      offset: String(evidenceOffset),
+      limit: String(evidencePageSize),
+    })
+    if (evidenceSourceId) parameters.set('source_id', evidenceSourceId)
+    if (evidenceType.trim()) parameters.set('artifact_type', evidenceType.trim())
+    if (evidenceSearch.trim()) parameters.set('query', evidenceSearch.trim())
+    if (evidenceDateFrom) parameters.set('date_from', new Date(evidenceDateFrom).toISOString())
+    if (evidenceDateTo) parameters.set('date_to', new Date(evidenceDateTo).toISOString())
+    apiGet<EvidencePage>(`/cases/${currentCase.id}/evidence?${parameters}`)
+      .then((page) => { if (!cancelled) setEvidencePage(page) })
+      .catch((caught) => {
+        if (!cancelled) {
+          setEvidencePage(null)
+          setEvidenceError(caught instanceof Error ? caught.message : 'Unable to load evidence')
+        }
+      })
+      .finally(() => { if (!cancelled) setEvidenceLoading(false) })
+    return () => { cancelled = true }
+  }, [currentCase, evidenceDateFrom, evidenceDateTo, evidenceOffset, evidenceSearch, evidenceSourceId, evidenceType, view])
+
+  async function openEvidencePreview(item: EvidenceSummary) {
+    if (!currentCase) return
+    try {
+      setPreviewEvidence(await apiGet<EvidenceItem>(`/cases/${currentCase.id}/evidence/${item.id}`))
+      setEvidenceError('')
+    } catch (caught) {
+      setEvidenceError(caught instanceof Error ? caught.message : 'Unable to load evidence preview')
+    }
+  }
 
   async function logout() {
     await apiPost<void>('/auth/logout')
@@ -139,7 +250,7 @@ function App() {
     const form = new FormData(formElement)
     try {
       const created = await apiPost<EvidenceSource>(`/cases/${currentCase.id}/sources`, { label: form.get('label'), description: form.get('description') || null })
-      formElement.reset(); setSources((items) => [created, ...items]); setSelectedSource(created); setError('')
+      formElement.reset(); setSources((items) => [created, ...items]); setSelectedSource(created); setSelectedFile(null); setProcessingJob(null); setError('')
     } catch (caught) { setError(caught instanceof Error ? caught.message : 'Unable to register source') }
   }
 
@@ -153,20 +264,67 @@ function App() {
     } catch (caught) { setError(caught instanceof Error ? caught.message : 'Unable to update source') }
   }
 
+  async function openSource(source: EvidenceSource) {
+    setSelectedSource(source)
+    setSelectedFile(null)
+    setProcessingJob(null)
+    if (!currentCase) return
+    try {
+      const job = await apiGet<ProcessingJob | null>(`/cases/${currentCase.id}/sources/${source.id}/processing`)
+      setProcessingJob(job)
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Unable to load processing details')
+    }
+  }
+
+  async function validateUpload(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!currentCase || !selectedSource || !selectedFile) return
+    setIngestionBusy(true)
+    try {
+      const updated = await apiUpload<EvidenceSource>(`/cases/${currentCase.id}/sources/${selectedSource.id}/upload`, selectedFile)
+      setSelectedSource(updated)
+      setSources((items) => items.map((item) => item.id === updated.id ? updated : item))
+      setProcessingJob(null)
+      setError('')
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Unable to validate source file')
+    } finally {
+      setIngestionBusy(false)
+    }
+  }
+
+  async function confirmProcessing() {
+    if (!currentCase || !selectedSource) return
+    setIngestionBusy(true)
+    try {
+      const job = await apiPost<ProcessingJob>(`/cases/${currentCase.id}/sources/${selectedSource.id}/process`)
+      const updated = await apiGet<EvidenceSource>(`/cases/${currentCase.id}/sources/${selectedSource.id}`)
+      setProcessingJob(job)
+      setSelectedSource(updated)
+      setSources((items) => items.map((item) => item.id === updated.id ? updated : item))
+      setError('')
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Unable to process source')
+    } finally {
+      setIngestionBusy(false)
+    }
+  }
+
   if (checkingAuth) return <div className="loading-page">Opening ForenSight…</div>
   if (!user) return <LoginScreen onLogin={(loggedInUser) => {
     setUser(loggedInUser)
     void loadCases().catch((caught) => setError(caught instanceof Error ? caught.message : 'Unable to load cases'))
   }} />
 
-  const functionalView = view === 'Overview' || view === 'Case Information' || view === 'Import / Sources'
+  const functionalView = view === 'Overview' || view === 'Evidence' || view === 'Case Information' || view === 'Import / Sources'
 
   return (
     <div className="app-shell">
       <aside className="sidebar">
         <div className="brand"><div className="brand-mark">F</div><div><div className="brand-name">ForenSight AI</div><div className="brand-subtitle">Investigation Workspace</div></div></div>
         <nav className="sidebar-navigation" aria-label="Primary navigation">
-          <div className="navigation-group">{primaryNavigation.map((item) => <button key={item} type="button" className={`navigation-item ${view === item ? 'active' : ''}`} onClick={() => setView(item)}>{item}</button>)}</div>
+          <div className="navigation-group">{primaryNavigation.map((item) => <button key={item} type="button" className={`navigation-item ${view === item ? 'active' : ''}`} onClick={() => { if (item === 'Evidence') { setEvidenceLoading(true); setEvidenceError('') } setView(item) }}>{item}</button>)}</div>
           <div className="navigation-divider" />
           <div className="navigation-group secondary">{secondaryNavigation.map((item) => <button key={item} type="button" className={`navigation-item ${view === item ? 'active' : ''}`} onClick={() => setView(item)}>{item}</button>)}</div>
         </nav>
@@ -176,7 +334,7 @@ function App() {
       <div className="workspace">
         <header className="topbar">
           <div className="case-context"><span className="case-label">Current Case</span><strong>{currentCase ? `${currentCase.case_identifier} · ${currentCase.name}` : 'No case selected'}</strong></div>
-          <div className="topbar-actions"><button type="button" className="topbar-button" disabled>Global Search</button><button type="button" className="topbar-button ask-button" disabled>Ask ForenSight</button><span className="system-status">System Ready</span><span className="investigator-name">{user.display_name}</span><button type="button" className="profile-button" onClick={() => void logout()}>Logout</button></div>
+          <div className="topbar-actions"><button type="button" className="topbar-button" disabled>Global Search</button><button type="button" className="topbar-button ask-button" disabled>Ask ForenSight</button><button type="button" className="topbar-button" onClick={() => setTheme((current) => current === 'dark' ? 'light' : 'dark')} aria-label={`Switch to ${theme === 'dark' ? 'light' : 'dark'} theme`}>{theme === 'dark' ? 'Light theme' : 'Dark theme'}</button><span className="system-status">System Ready</span><span className="investigator-name">{user.display_name}</span><button type="button" className="profile-button" onClick={() => void logout()}>Logout</button></div>
         </header>
 
         <main className="main-workspace">
@@ -185,11 +343,88 @@ function App() {
 
           {view === 'Case Information' && <><PageHeader eyebrow="CASE INFORMATION" title={currentCase?.name ?? 'No case selected'} description="View and update permitted investigation-container metadata." />{currentCase ? <section className="panel narrow-panel"><div className="metadata-row"><span>Case identifier</span><strong>{currentCase.case_identifier}</strong></div><div className="metadata-row"><span>Created</span><strong>{new Date(currentCase.created_at).toLocaleString()}</strong></div><form className="stacked-form divided-form" onSubmit={updateCase} key={currentCase.id}><label>Case name<input name="name" defaultValue={currentCase.name} maxLength={200} required /></label><label>Description<textarea name="description" defaultValue={currentCase.description ?? ''} maxLength={5000} rows={6} /></label><button className="primary-button">Save case information</button></form></section> : <EmptySelection />}</>}
 
-          {view === 'Import / Sources' && <><PageHeader eyebrow="SOURCE REGISTRATION" title="Evidence Sources" description="Register device/source records only. UFDR upload and ingestion are not part of this milestone." />{currentCase ? <div className="content-grid sources-grid"><section className="panel"><h2>Registered sources</h2>{sources.length === 0 ? <p className="muted">No sources registered for this case.</p> : <div className="record-list">{sources.map((source) => <button type="button" className={`record-card ${selectedSource?.id === source.id ? 'selected' : ''}`} key={source.id} onClick={() => setSelectedSource(source)}><strong>{source.label}</strong><small>{source.description || 'No description'}</small></button>)}</div>}<h2 className="section-heading">Register source</h2><form className="stacked-form" onSubmit={createSource}><label>Source label<input name="label" maxLength={200} required /></label><label>Description<textarea name="description" maxLength={5000} rows={4} /></label><button className="primary-button">Register source record</button></form></section><section className="panel"><h2>Source information</h2>{selectedSource ? <form className="stacked-form" onSubmit={updateSource} key={selectedSource.id}><div className="metadata-row"><span>Source ID</span><strong className="mono">{selectedSource.id}</strong></div><label>Label<input name="label" defaultValue={selectedSource.label} maxLength={200} required /></label><label>Description<textarea name="description" defaultValue={selectedSource.description ?? ''} maxLength={5000} rows={5} /></label><button className="primary-button">Save source information</button></form> : <p className="muted">Select a source to view its details.</p>}</section></div> : <EmptySelection />}</>}
+          {view === 'Evidence' && <EvidenceWorkspace
+            currentCase={currentCase}
+            sources={sources}
+            sourceId={evidenceSourceId}
+            onSourceChange={(sourceId) => { setEvidenceLoading(true); setEvidenceError(''); setEvidenceSourceId(sourceId); setEvidenceOffset(0); setPreviewEvidence(null) }}
+            page={evidencePage}
+            loading={evidenceLoading}
+            error={evidenceError}
+            search={evidenceSearch}
+            typeFilter={evidenceType}
+            dateFrom={evidenceDateFrom}
+            dateTo={evidenceDateTo}
+            onSearchChange={(value) => { setEvidenceLoading(true); setEvidenceSearch(value); setEvidenceOffset(0) }}
+            onTypeChange={(value) => { setEvidenceLoading(true); setEvidenceType(value); setEvidenceOffset(0) }}
+            onDateFromChange={(value) => { setEvidenceLoading(true); setEvidenceDateFrom(value); setEvidenceOffset(0) }}
+            onDateToChange={(value) => { setEvidenceLoading(true); setEvidenceDateTo(value); setEvidenceOffset(0) }}
+            onPrevious={() => { setEvidenceLoading(true); setEvidenceError(''); setEvidenceOffset((offset) => Math.max(0, offset - evidencePageSize)) }}
+            onNext={() => { setEvidenceLoading(true); setEvidenceError(''); setEvidenceOffset((offset) => offset + evidencePageSize) }}
+            onPreview={(item) => void openEvidencePreview(item)}
+          />}
+
+          {view === 'Import / Sources' && <>
+            <PageHeader eyebrow="UFDR SOURCE INGESTION" title="Import / Sources" description="Register a forensic source, validate its original file, confirm processing, and review provenance and diagnostics." />
+            {currentCase ? <div className="content-grid sources-grid">
+              <section className="panel">
+                <h2>Registered sources</h2>
+                {sources.length === 0 ? <p className="muted">No sources registered for this case.</p> : <div className="record-list">{sources.map((source) => <button type="button" className={`record-card ${selectedSource?.id === source.id ? 'selected' : ''}`} key={source.id} onClick={() => void openSource(source)}><strong>{source.label}</strong><span className={`state-badge state-${source.processing_state}`}>{source.processing_state.replaceAll('_', ' ')}</span><small>{source.description || 'No description'}</small></button>)}</div>}
+                <h2 className="section-heading">Register source</h2>
+                <form className="stacked-form" onSubmit={createSource}>
+                  <label>Source/device label<input name="label" maxLength={200} required /></label>
+                  <label>Description<textarea name="description" maxLength={5000} rows={4} /></label>
+                  <button className="primary-button">Register source record</button>
+                </form>
+              </section>
+              <section className="panel">
+                <h2>Source workflow</h2>
+                {selectedSource ? <div className="source-workflow">
+                  <form className="stacked-form" onSubmit={updateSource} key={`metadata-${selectedSource.id}`}>
+                    <div className="metadata-row"><span>Permanent Source ID</span><strong className="mono">{selectedSource.id}</strong></div>
+                    <label>Label<input name="label" defaultValue={selectedSource.label} maxLength={200} required /></label>
+                    <label>Description<textarea name="description" defaultValue={selectedSource.description ?? ''} maxLength={5000} rows={3} /></label>
+                    <button className="primary-button">Save source information</button>
+                  </form>
+
+                  {!selectedSource.original_filename && <form className="stacked-form ingestion-step" onSubmit={validateUpload}>
+                    <h3>1. Select and validate source file</h3>
+                    <label>UFDR source file<input type="file" onChange={(event) => setSelectedFile(event.target.files?.[0] ?? null)} required /></label>
+                    {selectedFile && <div className="file-summary"><span>{selectedFile.name}</span><strong>{formatBytes(selectedFile.size)}</strong></div>}
+                    <button className="primary-button" disabled={!selectedFile || ingestionBusy}>{ingestionBusy ? 'Validating…' : 'Upload and validate'}</button>
+                    <p className="muted small-text">Only formats backed by a configured parser adapter are accepted. Uploaded content is treated as untrusted input.</p>
+                  </form>}
+
+                  {selectedSource.original_filename && <div className="ingestion-step">
+                    <h3>Validated original source</h3>
+                    <div className="metadata-row"><span>File</span><strong>{selectedSource.original_filename}</strong></div>
+                    <div className="metadata-row"><span>Size</span><strong>{selectedSource.file_size === null ? '—' : formatBytes(selectedSource.file_size)}</strong></div>
+                    <div className="metadata-row"><span>SHA-256</span><strong className="mono hash-value">{selectedSource.sha256}</strong></div>
+                    <div className="metadata-row"><span>Parser</span><strong>{selectedSource.parser_identifier} {selectedSource.parser_version}</strong></div>
+                    <div className="metadata-row"><span>Imported</span><strong>{selectedSource.imported_at ? new Date(selectedSource.imported_at).toLocaleString() : '—'}</strong></div>
+                    {selectedSource.processing_state === 'validated' && <button type="button" className="primary-button" disabled={ingestionBusy} onClick={() => void confirmProcessing()}>{ingestionBusy ? 'Processing…' : 'Confirm and process'}</button>}
+                  </div>}
+
+                  <div className="ingestion-step">
+                    <h3>Processing result</h3>
+                    <div className="metadata-row"><span>State</span><strong>{selectedSource.processing_state.replaceAll('_', ' ')}</strong></div>
+                    {selectedSource.processing_stage && <div className="metadata-row"><span>Stage</span><strong>{selectedSource.processing_stage.replaceAll('_', ' ')}</strong></div>}
+                    {processingJob?.progress !== null && processingJob?.progress !== undefined && <div className="metadata-row"><span>Progress</span><strong>{processingJob.progress}%</strong></div>}
+                    <div className="metadata-row"><span>Evidence discovered</span><strong>{selectedSource.evidence_count}</strong></div>
+                    {Object.keys(selectedSource.evidence_counts).length > 0 && <div className="count-list">{Object.entries(selectedSource.evidence_counts).map(([type, count]) => <span key={type}><strong>{count}</strong> {type}</span>)}</div>}
+                    {selectedSource.is_partial && <div className="message warning">Source partially parsed — continue with caution.</div>}
+                    {selectedSource.error_summary && !selectedSource.is_partial && <div className="message error">{selectedSource.error_summary}</div>}
+                    {processingJob && processingJob.diagnostics.length > 0 && <div className="diagnostics"><h4>Diagnostics</h4>{processingJob.diagnostics.map((item, index) => <div key={`${item.code ?? 'diagnostic'}-${index}`}><strong>{item.code ?? item.severity ?? 'Diagnostic'}</strong><span>{item.message}</span>{item.original_reference && <small>Source reference: {item.original_reference}</small>}</div>)}</div>}
+                  </div>
+                </div> : <p className="muted">Select a source to view its details and ingestion workflow.</p>}
+              </section>
+            </div> : <EmptySelection />}
+          </>}
 
           {!functionalView && <section className="empty-workspace"><div className="empty-workspace-content"><h2>{view}</h2><p>This area is reserved for a later ForenSight milestone.</p></div></section>}
         </main>
       </div>
+      {previewEvidence && <EvidencePreview item={previewEvidence} source={sources.find((source) => source.id === previewEvidence.source_id)} onClose={() => setPreviewEvidence(null)} />}
     </div>
   )
 }
@@ -200,6 +435,75 @@ function PageHeader({ eyebrow, title, description }: { eyebrow: string; title: s
 
 function EmptySelection() {
   return <section className="empty-workspace"><div className="empty-workspace-content"><h2>No case selected</h2><p>Open a case from Overview to continue.</p></div></section>
+}
+
+function EvidenceWorkspace({ currentCase, sources, sourceId, onSourceChange, page, loading, error, search, typeFilter, dateFrom, dateTo, onSearchChange, onTypeChange, onDateFromChange, onDateToChange, onPrevious, onNext, onPreview }: {
+  currentCase: CaseRecord | null
+  sources: EvidenceSource[]
+  sourceId: string
+  onSourceChange: (sourceId: string) => void
+  page: EvidencePage | null
+  loading: boolean
+  error: string
+  search: string
+  typeFilter: string
+  dateFrom: string
+  dateTo: string
+  onSearchChange: (value: string) => void
+  onTypeChange: (value: string) => void
+  onDateFromChange: (value: string) => void
+  onDateToChange: (value: string) => void
+  onPrevious: () => void
+  onNext: () => void
+  onPreview: (item: EvidenceSummary) => void
+}) {
+  if (!currentCase) return <><PageHeader eyebrow="IMMUTABLE EVIDENCE" title="Evidence" description="Review normalized evidence and its source provenance." /><EmptySelection /></>
+
+  const items = page?.items ?? []
+
+  return <>
+    <PageHeader eyebrow="IMMUTABLE EVIDENCE" title="Evidence" description="Review normalized evidence and trace every item back to its original source record." />
+    <section className="panel evidence-panel" aria-busy={loading}>
+      <div className="evidence-toolbar">
+        <label>Evidence source<select value={sourceId} onChange={(event) => onSourceChange(event.target.value)}><option value="">All sources</option>{sources.map((source) => <option key={source.id} value={source.id}>{source.label}</option>)}</select></label>
+        <label>Search evidence<input type="search" value={search} onChange={(event) => onSearchChange(event.target.value)} placeholder="Search normalized text" /></label>
+        <label>Artifact type<input value={typeFilter} onChange={(event) => onTypeChange(event.target.value)} placeholder="All artifact types" /></label>
+        <label>From<input type="datetime-local" value={dateFrom} onChange={(event) => onDateFromChange(event.target.value)} /></label>
+        <label>To<input type="datetime-local" value={dateTo} onChange={(event) => onDateToChange(event.target.value)} /></label>
+      </div>
+      <p className="filter-note">Pagination and filters are applied by the authorized backend query.</p>
+      {loading && <EvidenceState title="Loading evidence…" detail="Retrieving normalized records and provenance." live />}
+      {!loading && error && <EvidenceState title="Evidence could not be loaded" detail={error} error />}
+      {!loading && !error && items.length === 0 && <EvidenceState title="No evidence records" detail="No immutable evidence matches the current case and filters." />}
+      {!loading && !error && items.length > 0 && <div className="evidence-table-wrap"><table className="evidence-table"><caption className="sr-only">Evidence records for the selected case</caption><thead><tr><th scope="col">Reference</th><th scope="col">Type</th><th scope="col">Source</th><th scope="col">Timestamp</th><th scope="col">Searchable text</th><th scope="col"><span className="sr-only">Actions</span></th></tr></thead><tbody>{items.map((item) => <tr key={item.id}><td className="mono">{item.evidence_reference}</td><td>{item.artifact_type}</td><td>{sources.find((source) => source.id === item.source_id)?.label ?? item.source_id}</td><td>{item.occurred_at ? new Date(item.occurred_at).toLocaleString() : 'Not provided'}</td><td className="evidence-text">{item.searchable_text || 'No searchable text'}</td><td><button type="button" className="text-button" onClick={() => onPreview(item)} aria-label={`Preview evidence ${item.evidence_reference}`}>Preview</button></td></tr>)}</tbody></table></div>}
+      {!loading && !error && page && <nav className="pagination" aria-label="Evidence pagination"><button type="button" className="topbar-button" onClick={onPrevious} disabled={page.offset === 0}>Previous</button><span>Records {page.items.length ? page.offset + 1 : 0}–{page.offset + page.items.length} of {page.total}</span><button type="button" className="topbar-button" onClick={onNext} disabled={page.offset + page.items.length >= page.total}>Next</button></nav>}
+    </section>
+  </>
+}
+
+function EvidenceState({ title, detail, error = false, live = false }: { title: string; detail: string; error?: boolean; live?: boolean }) {
+  return <div className={`evidence-state ${error ? 'error-state' : ''}`} role={error ? 'alert' : undefined} aria-live={live ? 'polite' : undefined}><strong>{title}</strong><span>{detail}</span></div>
+}
+
+function EvidencePreview({ item, source, onClose }: { item: EvidenceItem; source?: EvidenceSource; onClose: () => void }) {
+  useEffect(() => {
+    function closeOnEscape(event: KeyboardEvent) { if (event.key === 'Escape') onClose() }
+    document.addEventListener('keydown', closeOnEscape)
+    return () => document.removeEventListener('keydown', closeOnEscape)
+  }, [onClose])
+
+  return <div className="drawer-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}><aside className="evidence-drawer" role="dialog" aria-modal="true" aria-labelledby="evidence-preview-title"><div className="drawer-header"><div><p className="eyebrow">READ-ONLY PREVIEW</p><h2 id="evidence-preview-title">{item.evidence_reference}</h2></div><button type="button" className="icon-button" onClick={onClose} aria-label="Close evidence preview" autoFocus>Close</button></div><div className="drawer-content"><dl className="preview-metadata"><div><dt>Artifact type</dt><dd>{item.artifact_type}</dd></div><div><dt>Source</dt><dd>{source?.label ?? item.source_id}</dd></div><div><dt>Original record</dt><dd className="mono">{item.original_record_id}</dd></div><div><dt>Occurred</dt><dd>{item.occurred_at ? new Date(item.occurred_at).toLocaleString() : 'Not provided'}</dd></div><div><dt>Application</dt><dd>{item.application ?? 'Not provided'}</dd></div><div><dt>Parser</dt><dd>{item.parser_identifier} {item.parser_version}</dd></div></dl><section><h3>Searchable text</h3><p className="preview-text">{item.searchable_text || 'No searchable text'}</p></section><JsonPreview title="Normalized data" value={item.data} /><JsonPreview title="Raw metadata" value={item.raw_metadata} /><p className="immutable-note">Evidence is read-only. No edit or delete actions are available.</p></div></aside></div>
+}
+
+function JsonPreview({ title, value }: { title: string; value: Record<string, unknown> }) {
+  return <section><h3>{title}</h3><pre className="json-preview">{JSON.stringify(value, null, 2)}</pre></section>
+}
+
+function formatBytes(bytes: number) {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`
 }
 
 export default App

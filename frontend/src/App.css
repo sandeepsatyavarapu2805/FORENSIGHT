@@ -346,8 +346,27 @@
 
 .message { padding: 11px 13px; border-radius: 6px; }
 .message.error { border: 1px solid #d78b8b; background: #fff0f0; color: #8b1f1f; }
+.message.warning { border: 1px solid #d4a84f; background: #fff8e6; color: #76520b; }
 .page-message { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
 .page-message button { border: 0; background: transparent; color: inherit; cursor: pointer; text-decoration: underline; }
+
+.source-workflow { display: flex; flex-direction: column; gap: 22px; }
+.ingestion-step { padding-top: 20px; border-top: 1px solid var(--border); }
+.ingestion-step h3 { margin: 0 0 16px; color: var(--text-strong); font-size: 16px; }
+.file-summary { display: flex; justify-content: space-between; gap: 12px; padding: 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); }
+.small-text { margin: 0; font-size: 12px; }
+.hash-value { font-size: 11px; word-break: break-all; }
+.count-list { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 16px; }
+.count-list span { padding: 6px 9px; border: 1px solid var(--border); border-radius: 999px; background: var(--bg); font-size: 12px; }
+.state-badge { align-self: flex-start; padding: 3px 7px; border: 1px solid var(--border); border-radius: 999px; font-size: 11px; text-transform: capitalize; }
+.state-ready { border-color: #62a77d; color: #267043 !important; }
+.state-partially_processed { border-color: #d4a84f; color: #8a610c !important; }
+.state-failed { border-color: #d78b8b; color: #9b2828 !important; }
+.diagnostics { margin-top: 14px; }
+.diagnostics h4 { margin: 0 0 8px; color: var(--text-strong); }
+.diagnostics > div { display: flex; flex-direction: column; gap: 3px; padding: 9px 0; border-top: 1px solid var(--border); }
+.diagnostics span,
+.diagnostics small { color: var(--text-muted); }
 
 .foundation-status {
   display: grid;
@@ -368,6 +387,42 @@
   color: var(--text-strong);
 }
 
+.evidence-panel { padding: 0; overflow: hidden; }
+.evidence-toolbar { display: grid; grid-template-columns: minmax(220px, .8fr) minmax(260px, 1.4fr) minmax(180px, .6fr); gap: 14px; padding: 18px 20px; border-bottom: 1px solid var(--border); }
+.evidence-toolbar label { display: flex; flex-direction: column; gap: 6px; color: var(--text-strong); font-size: 13px; font-weight: 600; }
+.evidence-toolbar input,
+.evidence-toolbar select { min-height: 40px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text-strong); }
+.evidence-toolbar input:focus,
+.evidence-toolbar select:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.filter-note { margin: 0; padding: 10px 20px; border-bottom: 1px solid var(--border); color: var(--text-muted); font-size: 12px; }
+.evidence-table-wrap { overflow-x: auto; }
+.evidence-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.evidence-table th { padding: 11px 13px; border-bottom: 1px solid var(--border); background: var(--bg); color: var(--text-muted); text-align: left; white-space: nowrap; }
+.evidence-table td { max-width: 260px; padding: 12px 13px; border-bottom: 1px solid var(--border); color: var(--text); vertical-align: top; overflow-wrap: anywhere; }
+.evidence-table tbody tr:hover { background: var(--surface-hover); }
+.evidence-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.text-button { padding: 0; border: 0; background: transparent; color: var(--accent); font-weight: 700; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
+.text-button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.pagination { display: flex; align-items: center; justify-content: flex-end; gap: 14px; padding: 14px 20px; color: var(--text-muted); font-size: 13px; }
+.pagination button:disabled { opacity: .5; cursor: not-allowed; }
+.evidence-state { min-height: 280px; display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 7px; padding: 30px; text-align: center; color: var(--text-muted); }
+.evidence-state strong { color: var(--text-strong); font-size: 17px; }
+.evidence-state.error-state strong { color: #b33b3b; }
+.drawer-backdrop { position: fixed; inset: 0; z-index: 20; display: flex; justify-content: flex-end; background: rgb(0 0 0 / 42%); }
+.evidence-drawer { width: min(560px, 100%); height: 100%; overflow-y: auto; border-left: 1px solid var(--border); background: var(--surface); box-shadow: -16px 0 40px rgb(0 0 0 / 18%); }
+.drawer-header { position: sticky; top: 0; z-index: 1; display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 20px; border-bottom: 1px solid var(--border); background: var(--surface); }
+.drawer-header h2 { margin: 0; color: var(--text-strong); font-size: 20px; overflow-wrap: anywhere; }
+.drawer-content { display: flex; flex-direction: column; gap: 22px; padding: 20px; }
+.drawer-content h3 { margin: 0 0 8px; color: var(--text-strong); font-size: 15px; }
+.preview-metadata { display: flex; flex-direction: column; margin: 0; }
+.preview-metadata div { display: grid; grid-template-columns: 130px minmax(0, 1fr); gap: 12px; padding: 9px 0; border-bottom: 1px solid var(--border); }
+.preview-metadata dt { color: var(--text-muted); }
+.preview-metadata dd { margin: 0; color: var(--text-strong); overflow-wrap: anywhere; }
+.preview-text { margin: 0; color: var(--text); white-space: pre-wrap; overflow-wrap: anywhere; }
+.json-preview { max-height: 300px; overflow: auto; margin: 0; padding: 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text); font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.immutable-note { margin: 0; padding: 12px; border: 1px solid var(--accent-border); border-radius: 6px; background: var(--accent-soft); color: var(--text-strong); font-size: 13px; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+
 @media (max-width: 900px) {
   .app-shell {
     grid-template-columns: 200px 1fr;
@@ -385,6 +440,7 @@
 
   .content-grid,
   .sources-grid { grid-template-columns: 1fr; }
+  .evidence-toolbar { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 650px) {

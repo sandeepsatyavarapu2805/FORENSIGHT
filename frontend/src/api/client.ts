@@ -17,7 +17,9 @@ async function apiRequest<T>(path: string, options: RequestInit = {}): Promise<T
     ...options,
     credentials: 'include',
     headers: {
-      ...(options.body ? { 'Content-Type': 'application/json' } : {}),
+      ...(options.body && !(options.body instanceof FormData)
+        ? { 'Content-Type': 'application/json' }
+        : {}),
       ...options.headers,
     },
   })
@@ -50,4 +52,10 @@ export function apiPost<T>(path: string, body?: unknown): Promise<T> {
 
 export function apiPatch<T>(path: string, body: unknown): Promise<T> {
   return apiRequest<T>(path, { method: 'PATCH', body: JSON.stringify(body) })
+}
+
+export function apiUpload<T>(path: string, file: File): Promise<T> {
+  const body = new FormData()
+  body.append('file', file)
+  return apiRequest<T>(path, { method: 'POST', body })
 }
