@@ -54,6 +54,10 @@ export function apiPatch<T>(path: string, body: unknown): Promise<T> {
   return apiRequest<T>(path, { method: 'PATCH', body: JSON.stringify(body) })
 }
 
+export function apiDelete(path: string): Promise<void> {
+  return apiRequest<void>(path, { method: 'DELETE' })
+}
+
 export function apiUpload<T>(path: string, file: File): Promise<T> {
   const body = new FormData()
   body.append('file', file)

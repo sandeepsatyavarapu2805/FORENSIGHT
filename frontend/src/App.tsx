@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
-import { ApiError, apiGet, apiPatch, apiPost, apiUpload } from './api/client'
+import { ApiError, apiDelete, apiGet, apiPatch, apiPost, apiUpload } from './api/client'
 import './App.css'
 
 type User = {
@@ -118,6 +118,65 @@ type AnalysisOverview = {
   entities: AnalysisEntity[]
   timeline: TimelineEntry[]
   relationships: AnalysisRelationship[]
+  warnings: string[]
+}
+
+type AskCitation = {
+  evidence_id: string
+  evidence_reference: string
+  source_id: string
+  artifact_type: string
+  occurred_at: string | null
+  application: string | null
+  excerpt: string
+}
+
+type AskResponse = {
+  answer: string
+  sufficient_evidence: boolean
+  citations: AskCitation[]
+}
+
+type AskHistoryItem = {
+  id: string
+  query: string
+  response: AskResponse
+}
+
+type FindingEvidence = {
+  id: string
+  evidence_reference: string
+  source_id: string
+  artifact_type: string
+  application: string | null
+  occurred_at: string | null
+}
+
+type Finding = {
+  id: string
+  case_id: string
+  title: string
+  description: string
+  status: 'draft' | 'confirmed'
+  created_by_id: string
+  created_at: string
+  updated_at: string
+  evidence: FindingEvidence[]
+}
+
+type InvestigationReport = {
+  case: CaseRecord
+  investigator: User
+  generated_at: string
+  findings: Finding[]
+  sources: Array<{
+    id: string
+    label: string
+    sha256: string | null
+    parser_identifier: string | null
+    parser_version: string | null
+    is_partial: boolean
+  }>
   warnings: string[]
 }
 
@@ -316,6 +375,11 @@ function App() {
 
   const [analysisError, setAnalysisError] =
     useState('')
+
+  const [askQuery, setAskQuery] = useState('')
+  const [askLoading, setAskLoading] = useState(false)
+  const [askError, setAskError] = useState('')
+  const [askHistory, setAskHistory] = useState<AskHistoryItem[]>([])
 
   const loadCases = useCallback(async () => {
     const records = await apiGet<CaseRecord[]>('/cases')
@@ -592,6 +656,48 @@ function App() {
           ? caught.message
           : 'Unable to load full evidence record',
       )
+    }
+  }
+
+  async function submitAsk(query: string) {
+    if (!currentCase) return
+
+    const cleaned = query.trim()
+
+    if (cleaned.length < 2) {
+      setAskError('Enter a more specific question.')
+      return
+    }
+
+    setAskLoading(true)
+    setAskError('')
+
+    try {
+      const response = await apiPost<AskResponse>(
+        `/cases/${currentCase.id}/ask`,
+        {
+          query: cleaned,
+        },
+      )
+
+      setAskHistory((history) => [
+        ...history,
+        {
+          id: crypto.randomUUID(),
+          query: cleaned,
+          response,
+        },
+      ])
+
+      setAskQuery('')
+    } catch (caught) {
+      setAskError(
+        caught instanceof Error
+          ? caught.message
+          : 'Unable to query ForenSight',
+      )
+    } finally {
+      setAskLoading(false)
     }
   }
 
@@ -906,6 +1012,9 @@ function App() {
     view === 'Overview' ||
     view === 'Evidence' ||
     view === 'Analysis' ||
+    view === 'Ask' ||
+    view === 'Findings' ||
+    view === 'Reports' ||
     view === 'Case Information' ||
     view === 'Import / Sources'
 
@@ -1005,7 +1114,11 @@ function App() {
             <button
               type="button"
               className="topbar-button ask-button"
-              disabled
+              disabled={!currentCase}
+              onClick={() => {
+                setAskError('')
+                setView('Ask')
+              }}
             >
               Ask ForenSight
             </button>
@@ -1301,6 +1414,53 @@ function App() {
               data={analysisData}
               loading={analysisLoading}
               error={analysisError}
+              onEvidenceReference={(reference) => {
+                setEvidenceSearch(reference)
+                setEvidenceOffset(0)
+                setEvidenceLoading(true)
+                setEvidenceError('')
+                setView('Evidence')
+              }}
+            />
+          )}
+
+          {view === 'Ask' && (
+            <AskWorkspace
+              currentCase={currentCase}
+              query={askQuery}
+              loading={askLoading}
+              error={askError}
+              history={askHistory}
+              onQueryChange={setAskQuery}
+              onSubmit={(query) => void submitAsk(query)}
+              onCitation={(reference) => {
+                setEvidenceSearch(reference)
+                setEvidenceOffset(0)
+                setEvidenceLoading(true)
+                setEvidenceError('')
+                setView('Evidence')
+              }}
+            />
+          )}
+
+          {view === 'Findings' && (
+            <FindingsWorkspace
+              key={currentCase?.id ?? 'no-case'}
+              currentCase={currentCase}
+              onEvidenceReference={(reference) => {
+                setEvidenceSearch(reference)
+                setEvidenceOffset(0)
+                setEvidenceLoading(true)
+                setEvidenceError('')
+                setView('Evidence')
+              }}
+            />
+          )}
+
+          {view === 'Reports' && (
+            <ReportsWorkspace
+              key={currentCase?.id ?? 'no-case'}
+              currentCase={currentCase}
               onEvidenceReference={(reference) => {
                 setEvidenceSearch(reference)
                 setEvidenceOffset(0)
@@ -2230,6 +2390,524 @@ function EvidenceWorkspace({
             </nav>
           )}
       </section>
+    </>
+  )
+}
+
+function FindingsWorkspace({
+  currentCase,
+  onEvidenceReference,
+}: {
+  currentCase: CaseRecord | null
+  onEvidenceReference: (reference: string) => void
+}) {
+  const [findings, setFindings] = useState<Finding[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+
+  const load = useCallback(async () => {
+    if (!currentCase) return
+    try {
+      setFindings(await apiGet<Finding[]>(`/cases/${currentCase.id}/findings`))
+      setError('')
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Unable to load findings')
+    } finally {
+      setLoading(false)
+    }
+  }, [currentCase])
+
+  useEffect(() => {
+    if (!currentCase) return
+    let cancelled = false
+    apiGet<Finding[]>(`/cases/${currentCase.id}/findings`)
+      .then((records) => {
+        if (!cancelled) {
+          setFindings(records)
+          setError('')
+        }
+      })
+      .catch((caught) => {
+        if (!cancelled) {
+          setError(caught instanceof Error ? caught.message : 'Unable to load findings')
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+    return () => { cancelled = true }
+  }, [currentCase])
+
+  async function createFinding(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!currentCase) return
+    const form = event.currentTarget
+    const data = new FormData(form)
+    const references = String(data.get('evidence_references') ?? '')
+      .split(',')
+      .map((value) => value.trim())
+      .filter(Boolean)
+    try {
+      await apiPost(`/cases/${currentCase.id}/findings`, {
+        title: data.get('title'),
+        description: data.get('description') ?? '',
+        evidence_references: references,
+      })
+      form.reset()
+      await load()
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Unable to create finding')
+    }
+  }
+
+  async function setFindingStatus(finding: Finding) {
+    if (!currentCase) return
+    try {
+      await apiPatch(`/cases/${currentCase.id}/findings/${finding.id}`, {
+        status: finding.status === 'draft' ? 'confirmed' : 'draft',
+      })
+      await load()
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Unable to update finding')
+    }
+  }
+
+  async function detachEvidence(finding: Finding, evidence: FindingEvidence) {
+    if (!currentCase) return
+    try {
+      await apiDelete(
+        `/cases/${currentCase.id}/findings/${finding.id}/evidence/${evidence.id}`,
+      )
+      await load()
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Unable to detach evidence')
+    }
+  }
+
+  return (
+    <>
+      <PageHeader
+        eyebrow="INVESTIGATOR AUTHORED"
+        title="Findings"
+        description="Record conclusions separately from immutable evidence and link every supported claim to its source record."
+      />
+      {!currentCase ? <EmptySelection /> : (
+        <div className="findings-layout">
+          <form className="panel finding-form" onSubmit={(event) => void createFinding(event)}>
+            <h2>Create finding</h2>
+            <label>
+              Title
+              <input name="title" maxLength={200} required />
+            </label>
+            <label>
+              Description
+              <textarea name="description" rows={5} maxLength={10000} />
+            </label>
+            <label>
+              Evidence references
+              <input
+                name="evidence_references"
+                placeholder="MSG-001, CALL-002"
+                aria-describedby="finding-reference-help"
+              />
+            </label>
+            <span id="finding-reference-help" className="muted small-text">
+              Optional comma-separated references from this case.
+            </span>
+            <button className="primary-button" type="submit">Save draft</button>
+          </form>
+          <section className="panel findings-list-panel">
+            <div className="section-heading-row">
+              <h2>Case findings</h2>
+              <span>{findings.length} total</span>
+            </div>
+            {error && <div className="message error" role="alert">{error}</div>}
+            {loading ? (
+              <EvidenceState title="Loading findings…" detail="Retrieving investigator-authored records." live />
+            ) : findings.length === 0 ? (
+              <EvidenceState title="No findings yet" detail="Create a draft and attach supporting evidence references." />
+            ) : (
+              <div className="finding-cards">
+                {findings.map((finding) => (
+                  <article className="finding-card" key={finding.id}>
+                    <div className="finding-card-header">
+                      <div>
+                        <span className={`status-pill ${finding.status}`}>{finding.status}</span>
+                        <h3>{finding.title}</h3>
+                      </div>
+                      <button
+                        className="topbar-button"
+                        type="button"
+                        onClick={() => void setFindingStatus(finding)}
+                      >
+                        Mark {finding.status === 'draft' ? 'confirmed' : 'draft'}
+                      </button>
+                    </div>
+                    <p>{finding.description || 'No description provided.'}</p>
+                    <div className="finding-evidence-list">
+                      {finding.evidence.length === 0 ? (
+                        <span className="muted small-text">No supporting evidence attached.</span>
+                      ) : finding.evidence.map((evidence) => (
+                        <div className="finding-evidence-row" key={evidence.id}>
+                          <button
+                            type="button"
+                            className="text-button"
+                            onClick={() => onEvidenceReference(evidence.evidence_reference)}
+                          >
+                            {evidence.evidence_reference}
+                          </button>
+                          <span>{evidence.artifact_type}</span>
+                          <button
+                            type="button"
+                            className="text-button danger-text"
+                            onClick={() => void detachEvidence(finding, evidence)}
+                          >
+                            Detach
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </article>
+                ))}
+              </div>
+            )}
+          </section>
+        </div>
+      )}
+    </>
+  )
+}
+
+function ReportsWorkspace({
+  currentCase,
+  onEvidenceReference,
+}: {
+  currentCase: CaseRecord | null
+  onEvidenceReference: (reference: string) => void
+}) {
+  const [report, setReport] = useState<InvestigationReport | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    if (!currentCase) return
+    let cancelled = false
+    apiGet<InvestigationReport>(`/cases/${currentCase.id}/report`)
+      .then((value) => {
+        if (!cancelled) {
+          setReport(value)
+          setError('')
+        }
+      })
+      .catch((caught) => {
+        if (!cancelled) setError(caught instanceof Error ? caught.message : 'Unable to generate report')
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+    return () => { cancelled = true }
+  }, [currentCase])
+
+  return (
+    <>
+      <PageHeader
+        eyebrow="DETERMINISTIC CASE REPORT"
+        title="Reports"
+        description="Generate a printable investigation summary from authored findings and their explicit evidence citations."
+      />
+      {!currentCase ? <EmptySelection /> : loading ? (
+        <section className="panel"><EvidenceState title="Generating report…" detail="Resolving findings and provenance." live /></section>
+      ) : error ? (
+        <section className="panel"><EvidenceState title="Report could not be generated" detail={error} error /></section>
+      ) : report && (
+        <article className="panel printable-report">
+          <div className="report-actions no-print">
+            <span>Browser print preserves this deterministic view.</span>
+            <button className="primary-button" type="button" onClick={() => window.print()}>
+              Print report
+            </button>
+          </div>
+          <header className="report-header">
+            <p className="eyebrow">FORENSIGHT AI · INVESTIGATION REPORT</p>
+            <h2>{report.case.name}</h2>
+            <dl className="report-meta">
+              <div><dt>Case ID</dt><dd>{report.case.case_identifier}</dd></div>
+              <div><dt>Investigator</dt><dd>{report.investigator.display_name} ({report.investigator.username})</dd></div>
+              <div><dt>Generated</dt><dd>{new Date(report.generated_at).toLocaleString()}</dd></div>
+            </dl>
+          </header>
+          {report.warnings.map((warning) => (
+            <div className="message warning" key={warning}>{warning}</div>
+          ))}
+          <section className="report-section">
+            <h3>Findings</h3>
+            {report.findings.length === 0 ? <p>No findings selected.</p> : report.findings.map((finding, index) => (
+              <article className="report-finding" key={finding.id}>
+                <h4>{index + 1}. {finding.title} <span>({finding.status})</span></h4>
+                <p>{finding.description || 'No description provided.'}</p>
+                <strong>Supporting evidence</strong>
+                <div className="report-reference-list">
+                  {finding.evidence.length === 0 ? <span>None attached</span> : finding.evidence.map((evidence) => (
+                    <button
+                      className="text-button no-print-link"
+                      type="button"
+                      key={evidence.id}
+                      onClick={() => onEvidenceReference(evidence.evidence_reference)}
+                    >
+                      {evidence.evidence_reference} · {evidence.artifact_type}
+                    </button>
+                  ))}
+                </div>
+              </article>
+            ))}
+          </section>
+          <section className="report-section">
+            <h3>Source provenance</h3>
+            {report.sources.map((source) => (
+              <div className="report-source" key={source.id}>
+                <strong>{source.label}</strong>
+                <span>Source ID: {source.id}</span>
+                <span>SHA-256: {source.sha256 ?? 'Not available'}</span>
+                <span>Parser: {source.parser_identifier ?? 'Not recorded'} {source.parser_version ?? ''}</span>
+              </div>
+            ))}
+          </section>
+          <footer className="report-watermark">
+            Generated by ForenSight AI for {report.investigator.username} · {report.case.case_identifier} · Evidence remains immutable.
+          </footer>
+        </article>
+      )}
+    </>
+  )
+}
+
+function AskWorkspace({
+  currentCase,
+  query,
+  loading,
+  error,
+  history,
+  onQueryChange,
+  onSubmit,
+  onCitation,
+}: {
+  currentCase: CaseRecord | null
+  query: string
+  loading: boolean
+  error: string
+  history: AskHistoryItem[]
+  onQueryChange: (value: string) => void
+  onSubmit: (query: string) => void
+  onCitation: (reference: string) => void
+}) {
+  if (!currentCase) {
+    return (
+      <>
+        <PageHeader
+          eyebrow="GROUNDED INVESTIGATION ASSISTANT"
+          title="Ask ForenSight"
+          description="Ask questions against immutable case evidence."
+        />
+
+        <EmptySelection />
+      </>
+    )
+  }
+
+  function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    onSubmit(query)
+  }
+
+  return (
+    <>
+      <PageHeader
+        eyebrow="GROUNDED INVESTIGATION ASSISTANT"
+        title="Ask ForenSight"
+        description="Ask natural-language questions and inspect the evidence supporting every result."
+      />
+
+      <div className="ask-layout">
+        <section className="panel ask-main">
+          <form
+            className="ask-form"
+            onSubmit={submit}
+          >
+            <label htmlFor="ask-query">
+              Investigation question
+            </label>
+
+            <textarea
+              id="ask-query"
+              value={query}
+              onChange={(event) =>
+                onQueryChange(event.target.value)
+              }
+              placeholder="Example: Show evidence mentioning cryptocurrency wallets."
+              rows={4}
+              maxLength={1000}
+              disabled={loading}
+            />
+
+            <div className="ask-form-footer">
+              <span>
+                Answers must remain grounded in case evidence.
+              </span>
+
+              <button
+                type="submit"
+                className="primary-button"
+                disabled={loading || query.trim().length < 2}
+              >
+                {loading ? 'Investigating…' : 'Ask ForenSight'}
+              </button>
+            </div>
+          </form>
+
+          {error && (
+            <div className="message error ask-error">
+              {error}
+            </div>
+          )}
+
+          {history.length === 0 && !loading && (
+            <div className="ask-empty">
+              <strong>No investigation questions yet</strong>
+
+              <p>
+                Ask about names, identifiers, applications,
+                dates, keywords, or known evidence references.
+              </p>
+            </div>
+          )}
+
+          <div className="ask-history">
+            {[...history].reverse().map((entry) => (
+              <article
+                className="ask-exchange"
+                key={entry.id}
+              >
+                <div className="ask-question">
+                  <span>Investigator</span>
+                  <p>{entry.query}</p>
+                </div>
+
+                <div className="ask-answer">
+                  <div className="ask-answer-heading">
+                    <span>ForenSight</span>
+
+                    <span
+                      className={
+                        entry.response.sufficient_evidence
+                          ? 'grounding-status sufficient'
+                          : 'grounding-status insufficient'
+                      }
+                    >
+                      {entry.response.sufficient_evidence
+                        ? 'Evidence found'
+                        : 'Insufficient evidence'}
+                    </span>
+                  </div>
+
+                  <p>{entry.response.answer}</p>
+
+                  {entry.response.citations.length > 0 && (
+                    <div className="citation-section">
+                      <h3>
+                        Evidence citations
+                      </h3>
+
+                      <div className="citation-list">
+                        {entry.response.citations.map(
+                          (citation) => (
+                            <article
+                              className="citation-card"
+                              key={citation.evidence_id}
+                            >
+                              <div className="citation-heading">
+                                <button
+                                  type="button"
+                                  className="text-button"
+                                  onClick={() =>
+                                    onCitation(
+                                      citation.evidence_reference,
+                                    )
+                                  }
+                                >
+                                  {citation.evidence_reference}
+                                </button>
+
+                                <span>
+                                  {citation.artifact_type}
+                                </span>
+                              </div>
+
+                              <p>
+                                {citation.excerpt ||
+                                  'No searchable excerpt'}
+                              </p>
+
+                              <div className="citation-meta">
+                                {citation.application && (
+                                  <span>
+                                    App: {citation.application}
+                                  </span>
+                                )}
+
+                                {citation.occurred_at && (
+                                  <span>
+                                    {new Date(
+                                      citation.occurred_at,
+                                    ).toLocaleString()}
+                                  </span>
+                                )}
+                              </div>
+                            </article>
+                          ),
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {!entry.response.sufficient_evidence && (
+                    <div className="message warning">
+                      ForenSight did not find enough evidence
+                      to support a factual investigative answer.
+                    </div>
+                  )}
+                </div>
+              </article>
+            ))}
+          </div>
+        </section>
+
+        <aside className="panel ask-guidance">
+          <h2>Grounding rules</h2>
+
+          <ul>
+            <li>
+              Results are restricted to the current case.
+            </li>
+
+            <li>
+              Evidence citations identify the supporting records.
+            </li>
+
+            <li>
+              Unsupported conclusions must not be presented as facts.
+            </li>
+
+            <li>
+              Open citations to inspect the immutable evidence directly.
+            </li>
+          </ul>
+
+          <div className="immutable-note">
+            ForenSight assists investigation. It does not replace
+            investigator verification or source evidence.
+          </div>
+        </aside>
+      </div>
     </>
   )
 }

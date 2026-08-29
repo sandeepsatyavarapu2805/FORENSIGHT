@@ -66,7 +66,7 @@ def login(
         token,
         httponly=True,
         secure=settings.session_cookie_secure,
-        samesite="lax",
+        samesite=settings.session_cookie_samesite,
         expires=expires_at,
         path="/",
     )
@@ -91,4 +91,9 @@ def logout(
             )
         )
         db.commit()
-    response.delete_cookie(SESSION_COOKIE_NAME, path="/")
+    response.delete_cookie(
+        SESSION_COOKIE_NAME,
+        path="/",
+        secure=settings.session_cookie_secure,
+        samesite=settings.session_cookie_samesite,
+    )

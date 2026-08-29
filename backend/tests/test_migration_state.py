@@ -22,4 +22,6 @@ def test_database_is_at_migration_head_with_expected_tables() -> None:
         "auth_sessions",
         "processing_jobs",
         "evidence_items",
+        "findings",
+        "finding_evidence",
     } == table_names
